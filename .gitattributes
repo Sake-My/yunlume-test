@@ -1,0 +1,5 @@
+# Migration checksums and Linux deployment scripts must be stable across hosts.
+*.sql text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

@@ -1,0 +1,98 @@
+-- LEGACY MYSQL 8 ONLY.
+CREATE DATABASE IF NOT EXISTS nav_system DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE nav_system;
+
+CREATE TABLE IF NOT EXISTS sys_user (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    nickname VARCHAR(50) DEFAULT NULL,
+    avatar VARCHAR(255) DEFAULT NULL,
+    role VARCHAR(30) NOT NULL DEFAULT 'admin',
+    status TINYINT(1) NOT NULL DEFAULT 1,
+    token_version INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS site_config (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    site_name VARCHAR(50) NOT NULL,
+    site_description VARCHAR(255) DEFAULT NULL,
+    publish_url VARCHAR(255) DEFAULT NULL,
+    background_type VARCHAR(20) NOT NULL DEFAULT 'color',
+    background_color VARCHAR(30) NOT NULL DEFAULT '#050505',
+    background_image VARCHAR(500) DEFAULT NULL,
+    mobile_background_image VARCHAR(500) DEFAULT NULL,
+    font_color VARCHAR(30) NOT NULL DEFAULT '#ffffff',
+    background_effect TINYINT(1) NOT NULL DEFAULT 0,
+    music_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    music_url VARCHAR(500) DEFAULT NULL,
+    subscribe_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    top_content_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    message_text VARCHAR(100) DEFAULT NULL,
+    version INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS nav_category (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) NOT NULL,
+    icon VARCHAR(100) DEFAULT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    visible TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_nav_category_sort (sort_order, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS nav_bookmark (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    category_id BIGINT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    url VARCHAR(500) NOT NULL,
+    icon VARCHAR(255) DEFAULT NULL,
+    description VARCHAR(255) DEFAULT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    is_recommend TINYINT(1) NOT NULL DEFAULT 0,
+    is_external TINYINT(1) NOT NULL DEFAULT 1,
+    visible TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_nav_bookmark_category_sort (category_id, sort_order, id),
+    CONSTRAINT fk_nav_bookmark_category
+        FOREIGN KEY (category_id) REFERENCES nav_category(id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS search_engine (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) NOT NULL,
+    icon VARCHAR(255) DEFAULT NULL,
+    search_url VARCHAR(500) NOT NULL,
+    placeholder VARCHAR(100) DEFAULT NULL,
+    is_default TINYINT(1) NOT NULL DEFAULT 0,
+    sort_order INT NOT NULL DEFAULT 0,
+    visible TINYINT(1) NOT NULL DEFAULT 1,
+    default_guard TINYINT GENERATED ALWAYS AS (
+        CASE WHEN is_default = 1 THEN 1 ELSE NULL END
+    ) STORED,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_search_engine_one_default (default_guard),
+    INDEX idx_search_engine_visible_sort (visible, sort_order, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS custom_link (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    title VARCHAR(50) NOT NULL,
+    url VARCHAR(500) NOT NULL,
+    position VARCHAR(20) NOT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    visible TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_custom_link_position_sort (position, sort_order, id),
+    CONSTRAINT chk_custom_link_position CHECK (position IN ('header', 'footer'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

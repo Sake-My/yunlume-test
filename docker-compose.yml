@@ -1,0 +1,199 @@
+name: xydh-nav
+
+services:
+  postgres:
+    image: postgres:17.10-alpine3.23
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Hong_Kong}
+      POSTGRES_DB: ${POSTGRES_DB:-nav_system}
+      POSTGRES_USER: ${POSTGRES_USER:-nav_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    command:
+      - postgres
+      - -c
+      - timezone=${TZ:-Asia/Hong_Kong}
+      - -c
+      - log_timezone=${TZ:-Asia/Hong_Kong}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - nav_internal
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Hong_Kong}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - nav_internal
+    logging: *default-logging
+
+  backend:
+    image: ${BACKEND_IMAGE:-xydh-nav-backend:latest}
+    build:
+      context: ./nav-backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Hong_Kong}
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8080
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-nav_system}
+      POSTGRES_USER: ${POSTGRES_USER:-nav_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB:-nav_system}"
+      DB_USERNAME: ${POSTGRES_USER:-nav_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CACHE_TYPE: ${CACHE_TYPE:-redis}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      SPRING_DATA_REDIS_DATABASE: ${REDIS_DATABASE:-0}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES:-120}
+      OPENAPI_ENABLED: ${OPENAPI_ENABLED:-false}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      NAV_BOOTSTRAP_ENABLED: ${NAV_BOOTSTRAP_ENABLED:-false}
+      NAV_DEMO_DATA_ENABLED: ${NAV_DEMO_DATA_ENABLED:-false}
+      NAV_WEB_INSTALL_ENABLED: ${NAV_WEB_INSTALL_ENABLED:-true}
+      NAV_INSTALL_TOKEN: ${NAV_INSTALL_TOKEN:-}
+      NAV_DATABASE_SOURCE: ${NAV_DATABASE_SOURCE:-LEGACY_ENV}
+      NAV_DATABASE_CONFIG_FILE: /app/config/database.properties
+      NAV_DATABASE_CONFIGURED_MARKER_FILE: /app/config/database.configured
+      NAV_INSTALL_COMPLETED_MARKER_FILE: /app/config/install.completed
+      NAV_DATABASE_CA_FILE: /app/config/postgresql-ca.pem
+      NAV_DATABASE_TICKET_TTL_SECONDS: ${NAV_DATABASE_TICKET_TTL_SECONDS:-300}
+      NAV_DATABASE_AUTO_RESTART: ${NAV_DATABASE_AUTO_RESTART:-true}
+      NAV_ALLOW_INSECURE_DATABASE_SETUP: ${NAV_ALLOW_INSECURE_DATABASE_SETUP:-false}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      APP_UPLOAD_DIR: /app/uploads
+      UPLOAD_DIR: /app/uploads
+      APP_UPLOAD_BASE_URL: /uploads
+      APP_UPLOAD_MAX_BYTES: ${APP_UPLOAD_MAX_BYTES:-10485760}
+      APP_UPLOAD_MAX_TOTAL_BYTES: ${APP_UPLOAD_MAX_TOTAL_BYTES:-1073741824}
+      APP_UPLOAD_MAX_FILES: ${APP_UPLOAD_MAX_FILES:-500}
+      APP_UPLOAD_ORPHAN_GRACE_MS: ${APP_UPLOAD_ORPHAN_GRACE_MS:-86400000}
+      APP_UPLOAD_CLEANUP_INTERVAL_MS: ${APP_UPLOAD_CLEANUP_INTERVAL_MS:-21600000}
+      APP_UPLOAD_CLEANUP_INITIAL_DELAY_MS: ${APP_UPLOAD_CLEANUP_INITIAL_DELAY_MS:-60000}
+      JAVA_TOOL_OPTIONS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -Dfile.encoding=UTF-8}
+    volumes:
+      - uploads_data:/app/uploads
+      - backend_logs:/app/logs
+      - database_config:/app/config
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://127.0.0.1:8080/api/health || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    networks:
+      nav_internal:
+        aliases:
+          - nav-backend
+    logging: *default-logging
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-xydh-nav-frontend:latest}
+    build:
+      context: ./nav-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_UPLOAD_MAX_BYTES: ${APP_UPLOAD_MAX_BYTES:-10485760}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://127.0.0.1/ || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    networks:
+      - nav_internal
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - uploads_data:/var/www/uploads:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://127.0.0.1/healthz || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nav_internal
+    logging: *default-logging
+
+networks:
+  nav_internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: ${POSTGRES_VOLUME_NAME:-xydh-nav_postgres_data}
+  redis_data:
+    name: ${REDIS_VOLUME_NAME:-xydh-nav_redis_data}
+  uploads_data:
+    name: ${UPLOADS_VOLUME_NAME:-xydh-nav_uploads_data}
+  backend_logs:
+    name: ${LOGS_VOLUME_NAME:-xydh-nav_backend_logs}
+  database_config:
+    name: ${DATABASE_CONFIG_VOLUME_NAME:-xydh-nav_database_config}
