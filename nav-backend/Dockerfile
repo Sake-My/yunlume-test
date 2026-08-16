@@ -5,9 +5,11 @@ RUN mvn -B -DskipTests dependency:go-offline
 COPY src ./src
 RUN mvn -B clean package -DskipTests
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
-RUN addgroup -S -g 10001 nav && adduser -S -D -H -u 10001 -G nav nav
+RUN groupadd --gid 10001 nav \
+    && useradd --uid 10001 --gid nav --no-create-home --home-dir /app \
+        --shell /usr/sbin/nologin nav
 RUN mkdir -p /app/uploads /app/logs /app/config \
     && chmod 0700 /app/config \
     && chown -R nav:nav /app
