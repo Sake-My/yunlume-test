@@ -25,6 +25,7 @@ import java.util.UUID;
 @Component
 public class DatabaseConfigurationStore {
 
+    private static final String EXTERNAL_MODE = "EXTERNAL";
     private static final Set<PosixFilePermission> OWNER_ONLY = EnumSet.of(
             PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE
@@ -96,6 +97,7 @@ public class DatabaseConfigurationStore {
             String instanceId = config.getProperty("nav.database-config.expected-instance-id");
             String jdbcUrl = config.getProperty("spring.datasource.url", "");
             if (!"1".equals(config.getProperty("nav.database-config.format"))
+                    || !EXTERNAL_MODE.equals(mode)
                     || !"1".equals(marker.getProperty("nav.database-marker.format"))
                     || !"CONFIGURED".equals(marker.getProperty("state"))
                     || !java.util.Objects.equals(mode, marker.getProperty("mode"))
@@ -130,7 +132,7 @@ public class DatabaseConfigurationStore {
             }
             Properties values = new Properties();
             values.setProperty("nav.database-config.format", "1");
-            values.setProperty("nav.database-config.mode", "EXTERNAL");
+            values.setProperty("nav.database-config.mode", EXTERNAL_MODE);
             values.setProperty("nav.database-config.expected-instance-id", expectedInstanceId);
             values.setProperty("spring.datasource.driver-class-name", "org.postgresql.Driver");
             values.setProperty("spring.datasource.url", jdbcUrl);
@@ -149,14 +151,6 @@ public class DatabaseConfigurationStore {
         }
     }
 
-    public synchronized void saveEmbedded(String expectedInstanceId) {
-        Properties values = new Properties();
-        values.setProperty("nav.database-config.format", "1");
-        values.setProperty("nav.database-config.mode", "EMBEDDED");
-        values.setProperty("nav.database-config.expected-instance-id", expectedInstanceId);
-        writePropertiesAtomically(configFile, values);
-    }
-
     public synchronized void markCompleted(String instanceId) {
         Properties values = new Properties();
         values.setProperty("nav.install-completed.format", "1");
@@ -170,7 +164,7 @@ public class DatabaseConfigurationStore {
      * mutate a remote database. A process crash after this point must be
      * reconciled by an operator instead of silently reopening database choice.
      */
-    public synchronized void beginConfiguration(String mode) {
+    public synchronized void beginConfiguration() {
         if (hasArtifact(configFile) || hasArtifact(configuredMarkerFile)
                 || hasArtifact(completedMarkerFile) || hasArtifact(caCertificateFile)) {
             throw BusinessException.conflict("Database configuration state already exists");
@@ -178,14 +172,14 @@ public class DatabaseConfigurationStore {
         Properties values = new Properties();
         values.setProperty("nav.database-marker.format", "1");
         values.setProperty("state", "PENDING");
-        values.setProperty("mode", mode);
+        values.setProperty("mode", EXTERNAL_MODE);
         values.setProperty("attempt-id", UUID.randomUUID().toString());
         values.setProperty("started-at", Instant.now().toString());
         reserveConfigurationMarker();
         writePropertiesAtomically(configuredMarkerFile, values);
     }
 
-    public synchronized void markConfigured(String mode, String instanceId) {
+    public synchronized void markConfigured(String instanceId) {
         if (!hasPersistedConnection()) {
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Persisted database configuration is missing");
@@ -193,7 +187,7 @@ public class DatabaseConfigurationStore {
         Properties values = new Properties();
         values.setProperty("nav.database-marker.format", "1");
         values.setProperty("state", "CONFIGURED");
-        values.setProperty("mode", mode);
+        values.setProperty("mode", EXTERNAL_MODE);
         values.setProperty("instance-id", instanceId);
         values.setProperty("configured-at", Instant.now().toString());
         writePropertiesAtomically(configuredMarkerFile, values);

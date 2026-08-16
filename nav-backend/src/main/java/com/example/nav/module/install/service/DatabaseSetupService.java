@@ -4,7 +4,6 @@ import com.example.nav.common.config.DatabaseInstallProperties;
 import com.example.nav.common.exception.BusinessException;
 import com.example.nav.module.install.dto.DatabaseConfigureDTO;
 import com.example.nav.module.install.dto.DatabaseConnectionDTO;
-import com.example.nav.module.install.model.DatabaseConnectionMode;
 import com.example.nav.module.install.model.DatabaseConnectionSpec;
 import com.example.nav.module.install.model.DatabaseSchemaState;
 import com.example.nav.module.install.model.DatabaseSslMode;
@@ -13,7 +12,6 @@ import com.example.nav.module.install.vo.DatabaseTestVO;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
@@ -138,11 +136,6 @@ public class DatabaseSetupService {
     private final ConfigurableApplicationContext applicationContext;
     private final boolean autoRestart;
     private final boolean allowInsecureSetup;
-    private final String embeddedHost;
-    private final int embeddedPort;
-    private final String embeddedDatabase;
-    private final String embeddedUsername;
-    private final String embeddedPassword;
 
     public DatabaseSetupService(
             InstallAccessService accessService,
@@ -150,12 +143,7 @@ public class DatabaseSetupService {
             DatabaseConnectionTicketStore ticketStore,
             DataSource currentDataSource,
             ConfigurableApplicationContext applicationContext,
-            DatabaseInstallProperties properties,
-            @Value("${POSTGRES_HOST:postgres}") String embeddedHost,
-            @Value("${POSTGRES_PORT:5432}") int embeddedPort,
-            @Value("${POSTGRES_DB:nav_system}") String embeddedDatabase,
-            @Value("${POSTGRES_USER:nav_user}") String embeddedUsername,
-            @Value("${POSTGRES_PASSWORD:}") String embeddedPassword
+            DatabaseInstallProperties properties
     ) {
         this.accessService = accessService;
         this.configurationStore = configurationStore;
@@ -164,11 +152,6 @@ public class DatabaseSetupService {
         this.applicationContext = applicationContext;
         this.autoRestart = properties.isAutoRestart();
         this.allowInsecureSetup = properties.isAllowInsecureSetup();
-        this.embeddedHost = embeddedHost;
-        this.embeddedPort = embeddedPort;
-        this.embeddedDatabase = embeddedDatabase;
-        this.embeddedUsername = embeddedUsername;
-        this.embeddedPassword = embeddedPassword;
     }
 
     public void requireSecureTransport(HttpServletRequest request) {
@@ -227,7 +210,7 @@ public class DatabaseSetupService {
             if (before.state() != DatabaseSchemaState.EMPTY && dto.initializeSchema()) {
                 throw BusinessException.badRequest("目标数据库已有完整结构，不应重复初始化");
             }
-            configurationStore.beginConfiguration(ticket.spec().mode().name());
+            configurationStore.beginConfiguration();
             pendingMarker = true;
 
             Inspection ready;
@@ -245,15 +228,11 @@ public class DatabaseSetupService {
             if (ready.state() != DatabaseSchemaState.READY_UNINSTALLED || ready.instanceId() == null) {
                 throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "目标数据库初始化后状态不符合要求");
             }
-            if (ticket.spec().mode() == DatabaseConnectionMode.EXTERNAL) {
-                Path runtimeCa = ticket.spec().caCertificatePem() == null
-                        ? null : configurationStore.caCertificateFile();
-                String runtimeUrl = jdbcUrl(ticket.spec(), runtimeCa);
-                configurationStore.saveExternal(ticket.spec(), runtimeUrl, ready.instanceId());
-            } else {
-                configurationStore.saveEmbedded(ready.instanceId());
-            }
-            configurationStore.markConfigured(ticket.spec().mode().name(), ready.instanceId());
+            Path runtimeCa = ticket.spec().caCertificatePem() == null
+                    ? null : configurationStore.caCertificateFile();
+            String runtimeUrl = jdbcUrl(ticket.spec(), runtimeCa);
+            configurationStore.saveExternal(ticket.spec(), runtimeUrl, ready.instanceId());
+            configurationStore.markConfigured(ready.instanceId());
             pendingMarker = false;
             ticketStore.advanceGeneration();
             boolean restartRequired = true;
@@ -337,30 +316,8 @@ public class DatabaseSetupService {
     }
 
     private DatabaseConnectionSpec normalize(DatabaseConnectionDTO dto) {
-        if (dto == null || dto.mode() == null) {
-            throw BusinessException.badRequest("数据库模式不能为空");
-        }
-        if (dto.mode() == DatabaseConnectionMode.EMBEDDED) {
-            if (hasText(dto.host()) || dto.port() != null || hasText(dto.database())
-                    || hasText(dto.username()) || hasText(dto.password())
-                    || dto.sslMode() != null || hasText(dto.caCertificatePem())
-                    || Boolean.TRUE.equals(dto.acknowledgeUnverifiedTls())) {
-                throw BusinessException.badRequest("内置数据库模式不能提交外部连接字段");
-            }
-            if (embeddedPassword == null || embeddedPassword.isBlank()) {
-                throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "内置数据库密码尚未配置");
-            }
-            return new DatabaseConnectionSpec(
-                    DatabaseConnectionMode.EMBEDDED,
-                    validateHost(embeddedHost),
-                    validatePort(embeddedPort),
-                    validateDatabase(embeddedDatabase),
-                    validateUsername(embeddedUsername),
-                    validatePassword(embeddedPassword),
-                    DatabaseSslMode.DISABLE,
-                    null,
-                    List.of()
-            );
+        if (dto == null) {
+            throw BusinessException.badRequest("数据库连接参数不能为空");
         }
 
         String host = validateHost(dto.host());
@@ -385,7 +342,6 @@ public class DatabaseSetupService {
             caCertificate = validateCaCertificate(dto.caCertificatePem());
         }
         return new DatabaseConnectionSpec(
-                DatabaseConnectionMode.EXTERNAL,
                 host,
                 port,
                 database,
@@ -399,14 +355,6 @@ public class DatabaseSetupService {
 
     private Inspection inspect(DatabaseConnectionSpec spec) {
         requireResolutionUnchanged(spec);
-        if (spec.mode() == DatabaseConnectionMode.EMBEDDED) {
-            try (HikariDataSource candidate = candidateDataSource(spec, null);
-                 Connection connection = candidate.getConnection()) {
-                return inspectConnection(connection, false);
-            } catch (SQLException | RuntimeException exception) {
-                throw unavailableConnection();
-            }
-        }
         Path temporaryCa = null;
         try {
             if (spec.caCertificatePem() != null) {
@@ -684,15 +632,13 @@ public class DatabaseSetupService {
                     statement.execute("SET LOCAL search_path TO public");
                     statement.execute("SELECT pg_catalog.pg_advisory_xact_lock("
                             + INSTALL_ADVISORY_LOCK + ")");
-                    Inspection underLock = inspectConnection(connection,
-                            spec.mode() == DatabaseConnectionMode.EXTERNAL);
+                    Inspection underLock = inspectConnection(connection, true);
                     if (underLock.state() != DatabaseSchemaState.EMPTY) {
                         throw BusinessException.conflict(
                                 "只允许初始化完全空的 PostgreSQL schema");
                     }
                     statement.execute(script);
-                    Inspection ready = inspectConnection(connection,
-                            spec.mode() == DatabaseConnectionMode.EXTERNAL);
+                    Inspection ready = inspectConnection(connection, true);
                     if (ready.state() != DatabaseSchemaState.READY_UNINSTALLED
                             || ready.instanceId() == null) {
                         throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
@@ -823,10 +769,6 @@ public class DatabaseSetupService {
         return host;
     }
 
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
-    }
-
     private int validatePort(int value) {
         if (value < 1 || value > 65535) {
             throw BusinessException.badRequest("数据库端口必须在 1-65535 之间");
@@ -867,7 +809,6 @@ public class DatabaseSetupService {
     }
 
     private void requireResolutionUnchanged(DatabaseConnectionSpec spec) {
-        if (spec.mode() != DatabaseConnectionMode.EXTERNAL) return;
         List<String> current = resolveSafeExternalAddresses(spec.host());
         if (!current.equals(spec.resolvedAddresses())) {
             throw BusinessException.conflict(

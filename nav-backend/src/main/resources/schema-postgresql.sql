@@ -1,5 +1,5 @@
 -- Standalone PostgreSQL 17 bootstrap reference for manual backend deployments.
--- The repository-level database/init.sql is the canonical Compose initializer.
+-- This file is the canonical schema used by the external PostgreSQL installer.
 BEGIN;
 
 SET TIME ZONE 'Asia/Hong_Kong';

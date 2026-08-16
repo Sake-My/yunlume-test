@@ -3,7 +3,6 @@ package com.example.nav.module.install.model;
 import java.util.List;
 
 public record DatabaseConnectionSpec(
-        DatabaseConnectionMode mode,
         String host,
         int port,
         String database,
@@ -19,8 +18,7 @@ public record DatabaseConnectionSpec(
 
     @Override
     public String toString() {
-        return "DatabaseConnectionSpec[mode=" + mode
-                + ", host=" + host
+        return "DatabaseConnectionSpec[host=" + host
                 + ", port=" + port
                 + ", database=<redacted>, username=<redacted>, password=<redacted>"
                 + ", sslMode=" + sslMode

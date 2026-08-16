@@ -3,7 +3,6 @@ package com.example.nav.module.install.service;
 import com.example.nav.common.config.DatabaseInstallProperties;
 import com.example.nav.common.exception.BusinessException;
 import com.example.nav.module.install.dto.DatabaseConnectionDTO;
-import com.example.nav.module.install.model.DatabaseConnectionMode;
 import com.example.nav.module.install.model.DatabaseSslMode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,8 +35,7 @@ class DatabaseSetupServiceValidationTest {
         when(currentDataSource.getConnection()).thenThrow(new SQLException("placeholder unavailable"));
         service = new DatabaseSetupService(
                 accessService, configurationStore, ticketStore, currentDataSource,
-                applicationContext, properties,
-                "postgres", 5432, "navigation", "nav-user", "Embedded!Secret2026");
+                applicationContext, properties);
     }
 
     @Test
@@ -79,7 +77,6 @@ class DatabaseSetupServiceValidationTest {
             boolean acknowledge
     ) {
         return new DatabaseConnectionDTO(
-                DatabaseConnectionMode.EXTERNAL,
                 host,
                 5432,
                 "navigation",

@@ -88,7 +88,6 @@ describe('installation API security contract', () => {
       },
     })
     const database = {
-      mode: 'EXTERNAL' as const,
       host: 'db.example.com',
       port: 5432,
       database: 'navigation',

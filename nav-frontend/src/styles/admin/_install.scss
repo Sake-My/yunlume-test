@@ -270,42 +270,11 @@
   margin-top: 16px;
 }
 
-.install-database-mode {
-  min-width: 0;
-  padding: 0;
+.install-database-guidance {
   margin: 0 0 18px;
-  border: 0;
-
-  legend {
-    margin-bottom: 9px;
-    color: #263248;
-    font-size: 14px;
-    font-weight: 650;
-  }
-
-  .el-radio-group {
-    display: flex;
-    width: 100%;
-  }
-
-  .el-radio-button {
-    min-width: 0;
-    flex: 1 1 0;
-  }
-
-  .el-radio-button__inner {
-    width: 100%;
-    min-height: 44px;
-    padding-inline: 12px;
-    white-space: normal;
-  }
-
-  > p {
-    margin-top: 9px;
-    color: #6f7b8e;
-    font-size: 12px;
-    line-height: 1.55;
-  }
+  color: #6f7b8e;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .install-database-fields {
@@ -703,7 +672,7 @@
 
   .install-check p,
   .install-token-help,
-  .install-database-mode > p,
+  .install-database-guidance,
   .install-ca-certificate > p,
   .install-summary dt {
     font-size: 14px;

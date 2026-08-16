@@ -6,18 +6,17 @@
 
 ```text
 .
-├── nav-frontend/       Vue 3 + Vite + TypeScript 前端
+├── nav-frontend/       Vue 3 前端及其轻量 Nginx web 镜像
 ├── nav-backend/        Spring Boot 3 + Java 17 后端
-├── database/           PostgreSQL 权威结构、迁移与旧 MySQL 参考
-├── nginx/nginx.conf    统一入口与反向代理
-├── ops/                备份、校验、迁移、恢复演练与回滚脚本
-├── docker-compose.yml  PostgreSQL、Redis、前后端和 Nginx 编排
+├── database/           PostgreSQL 权威结构与迁移历史
+├── ops/                应用镜像回滚脚本
+├── docker-compose.yml  web 与 backend 编排（PostgreSQL、Redis 均使用外部服务）
 └── .env.example        部署环境变量示例
 ```
 
 ## 本地开发
 
-依赖：Node.js 20+、npm 10+、JDK 17 和 Maven 3.9+。默认 `local` profile 使用 PostgreSQL 兼容模式的内存 H2，直接开发不要求安装 PostgreSQL 或 Redis；数据会在后端进程退出后清空。`prod` profile 和 Docker 部署使用 PostgreSQL 17 + Redis 7。
+依赖：Node.js 20+、npm 10+、JDK 17 和 Maven 3.9+。默认 `local` profile 使用 PostgreSQL 兼容模式的内存 H2，直接开发不要求安装 PostgreSQL 或 Redis；数据会在后端进程退出后清空。`prod` profile 和 Docker 部署只连接部署者提供的外部 PostgreSQL 与外部 Redis。
 
 1. 启动后端：
 
@@ -46,9 +45,32 @@
 
 `local` profile 默认启用 Swagger/OpenAPI；`prod` profile 默认关闭，生产环境只有显式设置 `OPENAPI_ENABLED=true` 才会开放这些文档地址。
 
-如需在本机按生产方式联调，请先启动 PostgreSQL/Redis，对空库执行 `database/init.sql`，再设置 `SPRING_PROFILES_ACTIVE=prod`、`CACHE_TYPE=redis`，以及 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD`、`REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`JWT_SECRET` 后启动后端。新库默认通过网页安装向导创建首位管理员；如需沿用环境变量引导，再额外配置 `NAV_BOOTSTRAP_ENABLED=true` 与 `ADMIN_PASSWORD`。
+如需在本机按生产方式联调，请先提供外部 PostgreSQL 空白专用库和外部 Redis，再设置 `SPRING_PROFILES_ACTIVE=prod`、`CACHE_TYPE=redis`、Redis/JWT 参数以及 `NAV_DATABASE_SOURCE=UNCONFIGURED`。启动后通过网页安装向导提交外部数据库连接并初始化 schema；不需要手工执行根目录 SQL。
 
 ## Docker Compose 一键启动
+
+### GitHub 自动构建镜像
+
+仓库包含 `.github/workflows/publish-images.yml`。Pull Request 和普通分支只执行前后端测试、生产构建与依赖审计，不会登录镜像仓库或发布镜像。只有以下两种提交在全部门禁通过后发布到 GitHub Container Registry（GHCR）：
+
+- 默认分支：`ghcr.io/<所有者>/<仓库>-web:latest` 和 `ghcr.io/<所有者>/<仓库>-backend:latest`。
+- `v1.2.3` 形式的版本标签：生成 `1.2.3`、`1.2` 和对应完整提交的 `sha-<40位提交摘要>` 标签；默认分支也始终生成对应的完整 SHA 标签。
+
+镜像路径中的所有者和仓库名会自动转换为小写，以兼容 GHCR 命名规则。两个镜像同时发布 `linux/amd64` 与 `linux/arm64` 清单，并附带 BuildKit provenance 和 SBOM。工作流中的第三方 Action 全部固定到完整提交 SHA；测试任务只有仓库只读权限，发布任务才临时取得 `packages: write`，使用仓库自动提供的 `GITHUB_TOKEN`，不需要添加数据库、Redis、管理员或安装密钥。两个 Docker 构建上下文分别限制在 `nav-frontend` 与 `nav-backend`，根目录的 `jiyi.md`、`jihua.md`、`.env` 和运行时凭据不会进入构建上下文；多阶段镜像最终层只包含前端静态运行文件或后端 JRE/JAR。
+
+首次发布后，在 GitHub 仓库的 **Packages** 中确认两个包的可见性。公开项目建议把包设为 Public；私有包部署时应使用只授予 `read:packages` 的令牌登录 `ghcr.io`，不要在服务器上使用个人账号密码。部署时优先固定版本或完整 SHA 标签；`latest` 适合首次体验，但不适合作为可审计的生产版本锚点。
+
+### 开源提交前检查
+
+不要在 GitHub 网页中直接拖拽整个本地目录；网页上传不会执行 `.gitignore`，可能把私有的 `jiyi.md`、`.env` 或 `.codex*` 临时归档一并上传。应在本地使用 Git 初始化和提交，并在首次提交前核对：
+
+```bash
+git check-ignore jiyi.md .env
+git status --ignored --short
+git ls-files
+```
+
+`jiyi.md` 与 `.env` 必须显示为已忽略，`git ls-files` 不得出现凭据、证书、备份、构建产物或 `.codex*` 文件。Shell 脚本应通过本地 Git 保留可执行位；许可证可在正式公开前按项目选择另行加入。
 
 1. 复制环境变量模板并修改其中所有密码和密钥：
 
@@ -64,21 +86,33 @@
    Copy-Item .env.example .env
    ```
 
-   正式 Linux 服务器必须在填写任何密钥前把 `.env` 设为 `0600`；Compose 本身不会阻止权限过宽的文件，而项目的备份、迁移和恢复脚本会直接拒绝它。
+   正式 Linux 服务器必须在填写任何密钥前把 `.env` 设为 `0600`；Compose 本身不会阻止权限过宽的文件，镜像回滚脚本会直接拒绝权限过宽的环境文件。
 
-   `POSTGRES_PASSWORD`、`REDIS_PASSWORD` 和 `JWT_SECRET` 为启动必填项；留空或不创建 `.env` 时 Compose 会拒绝启动。新部署还必须把 `NAV_INSTALL_TOKEN` 设置为 64 位小写十六进制随机值（例如执行 `openssl rand -hex 32`），它只用于首次网页安装，不是管理员密码。空值或弱值会让新库保持“尚未就绪”，不会自动生成或写入日志。
+   `REDIS_HOST`、`REDIS_PASSWORD` 和 `JWT_SECRET` 为启动必填项；留空或不创建 `.env` 时 Compose 会拒绝启动。新部署还必须把 `NAV_INSTALL_TOKEN` 设置为 64 位小写十六进制随机值（例如执行 `openssl rand -hex 32`），它只用于首次网页安装，不是管理员密码。外部 PostgreSQL 密码只在安装页中提交，不写入 `.env`。
 
-2. 构建并启动：
+2. 使用已经发布的镜像时，先在 `.env` 固定同一提交的 `BACKEND_IMAGE` 和 `WEB_IMAGE`：
+
+   ```dotenv
+   BACKEND_IMAGE=ghcr.io/<所有者>/<仓库>-backend:sha-<40位提交摘要>
+   WEB_IMAGE=ghcr.io/<所有者>/<仓库>-web:sha-<40位提交摘要>
+   ```
+
+   再拉取并启动：
 
    ```bash
-   docker compose up -d --build
+   docker compose pull
+   docker compose up -d --no-build
    ```
+
+   不应把尖括号原样写入配置；请在对应版本的 GitHub Packages 页面复制同一提交的两个真实镜像引用。使用私有包时，先用只具备 `read:packages` 的令牌执行 `docker login ghcr.io`。
+
+   开发者需要从源码自行构建时才使用 `docker compose up -d --build`。
 
 3. 查看状态与日志：
 
    ```bash
    docker compose ps
-   docker compose logs -f backend nginx
+   docker compose logs -f backend web
    ```
 
 默认 `APP_PORT=8080`，统一入口如下：
@@ -91,30 +125,50 @@
 - Swagger 兼容入口：`http://localhost:8080/swagger-ui.html`（仅 `OPENAPI_ENABLED=true`）
 - Knife4j（若后端启用）：`http://localhost:8080/doc.html`
 
-内置 PostgreSQL 与 Redis 只在容器内部网络开放。默认使用 `xydh-nav_postgres_data`、`xydh-nav_redis_data`、`xydh-nav_uploads_data`、`xydh-nav_backend_logs` 和 `xydh-nav_database_config` 五个显式命名卷，容器更新或重启不会清空业务数据、上传文件或安装向导保存的数据库连接配置。卷名可通过 `.env` 的 `*_VOLUME_NAME` 切换，供隔离恢复和快速回退使用。
+Compose 不创建 PostgreSQL、Redis 容器或对应数据卷；两项服务都必须由部署者或云服务商预先提供。项目只保留 `xydh-nav_uploads_data`、`xydh-nav_backend_logs` 和 `xydh-nav_database_config` 三个显式命名卷，容器更新或重启不会清空上传文件、后端日志或安装向导保存的数据库连接配置。外部 Redis 的持久化、高可用与备份由服务提供方负责。
+
+外部 Redis 默认启用 TLS，并使用 Java 运行环境的系统信任库完成证书及主机身份校验；使用私有 CA 时，应在自定义后端镜像或 JVM truststore 中安全加入该 CA。只有隔离且受信任的私网测试链路才可显式设置 `REDIS_SSL_ENABLED=false`，不要以关闭 TLS 代替正确的证书配置。
+
+### 从旧四容器拓扑升级
+
+旧版本由 `nginx`、`frontend`、`backend`、`redis` 四个项目容器组成。升级前先完成数据库、上传文件与环境配置备份，完整保留一份可执行的旧发行目录（至少包含旧 `docker-compose.yml` 与旧 `.env`），记录旧镜像 ID 并给它们添加不可变回滚标签，再在新 `.env` 中配置已经验收的外部 Redis、`BACKEND_IMAGE` 与 `WEB_IMAGE`。先用新 Compose 精确重建 `backend`，确认它已通过外部 Redis 完成健康检查；这一步会替换旧后端容器，但旧 `nginx` 与 `frontend` 可暂时保留作为入口回滚锚点。
+
+旧 `xydh-nav-nginx-1` 会占用 `APP_PORT`，不能与新 `web` 同时运行。核对容器名称和 Compose 标签后，先精确停止旧 `xydh-nav-nginx-1`，再启动 `web`。确认首页、后台、API、上传资源与数据库摘要全部正常后，才精确停止并删除旧 `xydh-nav-nginx-1`、`xydh-nav-frontend-1` 和 `xydh-nav-redis-1`。保留旧 Redis 数据卷和旧镜像作为观察期内的回滚锚点。
+
+此迁移会重建 `backend` 并改用外部 Redis，但不会删除或替换 `uploads_data`、`backend_logs`、`database_config`，也不修改外部 PostgreSQL。不要使用 `docker compose down -v`、`docker volume prune`、`docker system prune` 或 `--remove-orphans` 代替精确停用；这些宽泛操作可能删除仍需保留的数据或无关容器。首次拓扑切换不能直接使用只面向新两容器版本的通用回滚脚本，失败时应恢复旧 `.env` 与已标记镜像，再按旧 Compose 精确拉起原容器。
+
+`web` 内的 Nginx 会在启动时解析 `backend` 容器地址。日常发布或回滚后端时应同时重建 `web`，例如 `docker compose up -d --no-build --force-recreate backend web`，不要只替换后端后长期保留旧 web 容器。
+
+### 配合 1Panel OpenResty
+
+`web` 镜像已经包含轻量 Nginx，用于提供前端静态文件、代理 `/api`、读取上传卷和执行应用级限流；1Panel OpenResty 不替代这个内部服务器，只负责域名、HTTPS 和最外层反向代理。因此 Docker 中仍只有 `web` 与 `backend` 两个项目容器，不再单独运行入口 Nginx 容器。
+
+直接通过 `APP_PORT` 访问时保持 `APP_BIND_ADDRESS=0.0.0.0`、`WEB_TRUST_PROXY_HEADERS=false`，此时客户端伪造的转发头不会被信任。接入 1Panel OpenResty 时按以下边界配置：
+
+1. OpenResty 反向代理到宿主机的明确 loopback/私网地址与 `APP_PORT`，并显式覆写 `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`；公网入口只开放 HTTPS。
+2. 把 `APP_BIND_ADDRESS` 改为该明确的 loopback/私网地址，并用宿主机防火墙或隔离网络限制 `APP_PORT`，禁止普通客户端绕过 OpenResty 直连。若 OpenResty 运行在容器中，宿主机 `127.0.0.1` 通常不可从该容器访问，应使用受保护的宿主机私网地址或专用容器网络。
+3. 先保持 `WEB_TRUST_PROXY_HEADERS=false` 发起一次代理请求，从 `docker compose logs web` 确认 web 容器实际看到的即时代理源地址；再设置 `WEB_TRUST_PROXY_HEADERS=true`，并把 `WEB_TRUSTED_PROXY_CIDR` 设为该地址的 `/32`（IPv6 用 `/128`）或最窄的隔离代理网段。
+4. 执行 `docker compose up -d --no-deps --force-recreate web`，再确认 HTTPS 安装页、登录限流和访问日志中的客户端地址正确。
+
+安全校验会拒绝“信任代理头 + `0.0.0.0`/`::` 泛监听”，也拒绝信任 `0.0.0.0/0` 或 `::/0`。不要为了省事扩大可信网段；只有来自所配即时代理地址的协议和客户端 IP 头才应进入后端。
 
 ## 首次部署安装向导
 
-新部署把 `NAV_DATABASE_SOURCE` 设为 `UNCONFIGURED` 后，访问首页、后台或 `/install` 会进入首次部署向导。向导支持两种 PostgreSQL 模式：
+新部署把 `NAV_DATABASE_SOURCE` 设为 `UNCONFIGURED` 后，访问首页、后台或 `/install` 会进入首次部署向导。本发行编排和安装页只支持外部 PostgreSQL：请在数据库步骤填写主机、端口、数据库名、业务用户名、密码和 TLS 模式。Compose 不创建 `postgres` 服务。
 
-- **内置 PostgreSQL**：使用 Compose 自带的 PostgreSQL 17 服务以及 `.env` 中的 `POSTGRES_*` 参数。
-- **外部 PostgreSQL**：在页面中填写主机、端口、数据库名、业务用户名、密码和 TLS 模式。页面不接受原始 JDBC URL，也不会创建 PostgreSQL 服务器、数据库或角色。
-
-当前根目录只有一套 Compose 编排：即使最终选择外部 PostgreSQL，`docker compose up` 仍会校验 `POSTGRES_PASSWORD`、创建并启动内置 PostgreSQL 服务及其命名卷。数据库接管成功后，后端业务连接会改用外部库，但这个未被使用的内置实例不会自动停用，也不能当作外部库的备份或恢复目标；检测到 `EXTERNAL` 时，项目运维脚本会失败关闭。若要完全不启动内置 PostgreSQL，需要另行维护外部模式专用的 Compose override，当前仓库不提供该编排。
-
-外部模式要求部署者预先创建一个空白、专用的 PostgreSQL 14+ 数据库和非 superuser 业务用户，并授予连接及在 `public` schema 创建表、索引、序列、函数、触发器和迁移登记所需的 DDL 权限。向导会先只读测试连接；目标含未知对象、残缺项目结构、旧版未迁移结构或已安装管理员时均零写入拒绝。空库只有在用户明确确认后才执行权威 PostgreSQL schema 初始化。
+部署者必须预先创建一个空白、专用的 PostgreSQL 14+ 数据库和非 superuser 业务用户，并授予连接及在 `public` schema 创建表、索引、序列、函数、触发器和迁移登记所需的 DDL 权限。页面不接受原始 JDBC URL，也不会创建 PostgreSQL 服务器、数据库或角色。向导会先只读测试连接；目标含未知对象、残缺项目结构、旧版未迁移结构或已安装管理员时均零写入拒绝。空库只有在用户明确确认后才执行权威 PostgreSQL schema 初始化。
 
 安装页先验证 `NAV_INSTALL_TOKEN`，再进入“口令 → 数据库 → 环境 → 站点 → 账号 → 确认”六步流程。数据库测试成功只返回 5 分钟有效、单次使用且仅保存在当前页面内存中的随机 ticket；数据库密码和 CA 原文会立即从页面状态清除。配置成功后，后端把连接信息写入仅后端挂载的 `database_config` 卷（目录/文件限制为所有者可读写），自动重启并从该配置接管连接；密码不会进入 URL、浏览器存储或应用日志。外部 TLS 默认 `VERIFY_FULL`，也可选择 `VERIFY_CA`；`REQUIRE` 不校验证书和主机名，必须显式确认风险，外部模式不允许关闭 TLS。
 
-数据库接管后才执行站点单例、上传目录和 Redis 检查，然后创建站点信息与唯一首位管理员。匿名状态接口不会探测外部资源或公开组件细节。安装口令只从权限为 `0600` 的 `.env` 传入，后端不会生成、回传或打印明文口令。当前 Compose 通过容器环境变量传递口令，拥有 Docker 管理权限的用户可查看容器配置；因此该权限等同于 root 权限。安装完成后应从 `.env` 删除口令、设置 `NAV_WEB_INSTALL_ENABLED=false` 并重建后端容器。
+数据库接管后才执行站点单例、上传目录和外部 Redis 检查，然后创建站点信息与唯一首位管理员。匿名状态接口不会探测外部资源或公开组件细节。Redis 不可达时环境检查失败，不允许完成安装；安装完成后的健康检查也会失败关闭。安装口令只从权限为 `0600` 的 `.env` 传入，后端不会生成、回传或打印明文口令。当前 Compose 通过容器环境变量传递口令，拥有 Docker 管理权限的用户可查看容器配置；因此该权限等同于 root 权限。安装完成后应从 `.env` 删除口令、设置 `NAV_WEB_INSTALL_ENABLED=false`，并执行 `docker compose up -d --no-build --force-recreate backend web` 同步重建两个容器。
 
-安装提交受到 Nginx 每来源 IP 限流。服务端会在同一事务中再次锁定并检查安装状态，只有用户表为空且安装标记未完成时才能写入；成功后入口永久关闭，不会签发自动登录令牌，需使用刚创建的账号在 `/admin/login` 登录。即使之后误删全部用户，安装标记也不会自动重开。已有管理员的升级部署会在数据库迁移时回填完成标记，不修改管理员、密码或站点业务数据。
+安装提交受到 web 容器内置 Nginx 的每来源 IP 限流。服务端会在同一事务中再次锁定并检查安装状态，只有用户表为空且安装标记未完成时才能写入；成功后入口永久关闭，不会签发自动登录令牌，需使用刚创建的账号在 `/admin/login` 登录。即使之后误删全部用户，安装标记也不会自动重开。已有管理员的升级部署会在数据库迁移时回填完成标记，不修改管理员、密码或站点业务数据。
 
-默认示例入口是 HTTP，只适合受信任的本机或局域网首次安装。数据库密码、安装口令和管理员密码在公网 HTTP 中可能被旁路读取，因此外部数据库配置默认要求 HTTPS；仅在受信任局域网临时设置 `NAV_ALLOW_INSECURE_DATABASE_SETUP=true` 才允许 HTTP 提交。仓库内置 Nginx 目前只监听 HTTP，并会把上游传入的 `X-Forwarded-Proto` 覆写为自身的 `$scheme`；因此在它前面直接增加一个 TLS 代理并不能开箱即用，后端仍会看到 `http`。公网部署必须在项目 Nginx 同层终止 TLS，或者定制项目 Nginx，使其只接受明确列出的可信代理 IP 所传递的 HTTPS 协议信息和真实客户端地址；后一种拓扑还必须让项目 Nginx 入口仅绑定或暴露在 loopback/私有网络，不能同时允许公网客户端绕过可信代理直连。禁止无条件信任任意客户端提供的 `X-Forwarded-Proto` 或 `X-Forwarded-For`。
+默认示例入口是 HTTP，只适合受信任的本机或局域网首次安装。数据库密码、安装口令和管理员密码在公网 HTTP 中可能被旁路读取，因此外部数据库配置默认要求 HTTPS；仅在受信任局域网临时设置 `NAV_ALLOW_INSECURE_DATABASE_SETUP=true` 才允许 HTTP 提交。公网应按上节配置 1Panel OpenResty 和受限代理头信任；未显式启用时，web 容器会忽略客户端传入的 HTTPS 协议头，不能把“外层已经有证书”误当成后端已经安全识别 HTTPS。
 
-已有站点升级必须保持 `NAV_DATABASE_SOURCE=LEGACY_ENV`（或不设置，使用兼容默认值），不能改成 `UNCONFIGURED`。数据库连接文件、配置标记、完成标记或已有实例身份任一存在时，数据库断线只会进入故障状态，不会重新开放换库入口。
+通过安装向导完成的站点升级时继续保持 `NAV_DATABASE_SOURCE=UNCONFIGURED`，并原样保留 `database_config` 卷。数据库连接文件、配置标记、完成标记或已有实例身份任一存在时，数据库断线只会进入故障状态，不会重新开放换库入口。旧版依赖 `DB_URL`/`DB_USERNAME`/`DB_PASSWORD` 与 `LEGACY_ENV` 的直连部署不能直接套用本编排升级，应先在独立环境完成数据迁移和恢复演练。
 
-`database_config` 是安装状态与数据库实例身份的一部分，不是可丢弃缓存。当前 `ops/backup.sh`、恢复和演练脚本都不归档或重建这个卷：内置模式的同宿主机恢复依赖原卷仍然存在，跨宿主机恢复必须另行保护它；外部模式的卷还保存明文连接凭据及可选 CA，整个卷丢失后项目没有受支持的“重新关联既有外部库”流程，也不能把重新运行安装向导当作恢复方式。该卷的独立备份必须加密并异机保存，恢复后保持目录 `0700`、文件 `0600`。安装完成并确认登录成功后，应立即清空安装口令、关闭网页安装，并禁止对该卷执行 `down -v`、`volume rm` 或 `volume prune`。
+`database_config` 是安装状态与数据库实例身份的一部分，不是可丢弃缓存。它保存明文数据库连接凭据、可选 CA 和实例身份；整个卷丢失后项目没有受支持的“重新关联既有外部库”流程，也不能把重新运行安装向导当作恢复方式。该卷必须独立加密、异机备份，恢复后保持目录 `0700`、文件 `0600`。安装完成并确认登录成功后，应立即清空安装口令、关闭网页安装，并禁止对该卷执行 `down -v`、`volume rm` 或 `volume prune`。
 
 需要无人值守部署时仍可使用传统引导：设置 `NAV_BOOTSTRAP_ENABLED=true`、`ADMIN_USERNAME` 和满足强密码规则的 `ADMIN_PASSWORD`。环境变量引导成功后同样关闭网页安装入口；`ADMIN_PASSWORD` 不会在后台改密时回写。默认 `local` profile 的开发账号仍为 `admin / Local!Start2026`。生产默认 `NAV_DEMO_DATA_ENABLED=false`，不会因某张业务表为空而重新补写演示业务数据。
 
@@ -139,19 +193,23 @@
 
 | 变量 | 用途 | 示例默认值 |
 |---|---|---|
-| `APP_PORT` | Nginx 对外端口 | `8080` |
+| `APP_PORT` | web 容器映射到宿主机的端口 | `8080` |
+| `APP_BIND_ADDRESS` | web 端口绑定地址；信任代理头时必须是明确的 loopback/私网地址 | `0.0.0.0` |
+| `WEB_TRUST_PROXY_HEADERS` | 是否接受所配即时代理提供的客户端 IP 与原始协议头 | `false` |
+| `WEB_TRUSTED_PROXY_CIDR` | 唯一可信即时代理地址或最窄隔离网段；禁止全网段 | `127.0.0.1/32` |
 | `TZ` | 容器时区 | `Asia/Hong_Kong` |
-| `POSTGRES_DB` | PostgreSQL 数据库名 | `nav_system` |
-| `POSTGRES_USER` | PostgreSQL 业务用户 | `nav_user` |
-| `POSTGRES_PASSWORD` | PostgreSQL 业务用户密码；当前 Compose 即使选择外部模式也会校验并启动内置 PostgreSQL | 必须修改 |
-| `POSTGRES_VOLUME_NAME` | 当前 PostgreSQL 数据卷 | `xydh-nav_postgres_data` |
-| `REDIS_VOLUME_NAME` | 当前 Redis 数据卷 | `xydh-nav_redis_data` |
 | `UPLOADS_VOLUME_NAME` | 当前上传文件卷 | `xydh-nav_uploads_data` |
 | `LOGS_VOLUME_NAME` | 当前后端日志卷 | `xydh-nav_backend_logs` |
 | `DATABASE_CONFIG_VOLUME_NAME` | 安装向导持久化数据库连接与实例标记的后端专用卷 | `xydh-nav_database_config` |
-| `BACKEND_IMAGE` / `FRONTEND_IMAGE` | 可固定或回滚的应用镜像引用 | `xydh-nav-*-latest` |
-| `REDIS_PASSWORD` | Redis 密码 | 必须修改 |
-| `CACHE_TYPE` | Spring 缓存实现 | Compose 使用 `redis` |
+| `BACKEND_IMAGE` / `WEB_IMAGE` | 可固定或回滚的后端/web 应用镜像引用 | `xydh-nav-*:latest` |
+| `REDIS_HOST` | 外部 Redis 主机 | 必填 |
+| `REDIS_PORT` | 外部 Redis 端口 | `6379` |
+| `REDIS_USERNAME` | Redis ACL 用户名 | 可选 |
+| `REDIS_PASSWORD` | 外部 Redis 密码，不写入 URL 或日志 | 必填 |
+| `REDIS_DATABASE` | Redis 逻辑库编号 | `0` |
+| `REDIS_SSL_ENABLED` | 是否使用 TLS；仅受信任私网测试可显式关闭 | `true` |
+| `REDIS_CONNECT_TIMEOUT` | Redis 建连超时（大于 0 且不超过 60 秒） | `3s` |
+| `REDIS_READ_TIMEOUT` | Redis 读写超时（大于 0 且不超过 60 秒） | `3s` |
 | `JWT_SECRET` | JWT 签名密钥 | 至少 32 字节随机值 |
 | `JWT_EXPIRATION_MINUTES` | 登录令牌有效期（分钟，允许 5–10080） | `120` |
 | `OPENAPI_ENABLED` | 生产环境是否开放 Swagger/OpenAPI | `false` |
@@ -160,7 +218,7 @@
 | `NAV_DEMO_DATA_ENABLED` | 是否由后端补写演示业务数据；生产应关闭 | `false` |
 | `NAV_WEB_INSTALL_ENABLED` | 是否允许未初始化的新库使用网页安装向导 | `true` |
 | `NAV_INSTALL_TOKEN` | 首次网页安装的一次性口令；必须是 64 位小写十六进制随机值 | 新部署必填 |
-| `NAV_DATABASE_SOURCE` | 数据库来源；新部署用 `UNCONFIGURED`，已有站点升级保持 `LEGACY_ENV` | `.env.example` 为 `UNCONFIGURED` |
+| `NAV_DATABASE_SOURCE` | 数据库来源；外部数据库安装向导部署保持 `UNCONFIGURED` | `UNCONFIGURED` |
 | `NAV_ALLOW_INSECURE_DATABASE_SETUP` | 是否允许通过 HTTP 提交数据库凭据；仅可信局域网临时开启 | `false` |
 | `NAV_DATABASE_TICKET_TTL_SECONDS` | 数据库连接测试 ticket 有效期（服务端限制 30–900 秒） | `300` |
 | `NAV_DATABASE_AUTO_RESTART` | 保存数据库配置后是否让容器自动重启接管 | `true` |
@@ -182,7 +240,7 @@
 - 纯色模式提供纯黑、纯白快捷选项，也可自行选择背景色与字体色。
 - 图片模式可分别上传 PC 端和移动端 JPG、JPEG 或 PNG 图片；移动端留空时自动沿用 PC 端图片。
 - 上传图片保存在 `uploads_data` 命名卷，容器重建不会丢失；默认限制为单张 10MiB、总量 1GB、最多 500 张。虽然数据包导入的 multipart 入口允许更大请求，背景图片服务仍独立强制 `APP_UPLOAD_MAX_BYTES` 为 1–10485760 字节。
-- 单文件上限同时编译进前端上传提示，并传给后端运行配置；修改 `APP_UPLOAD_MAX_BYTES` 后必须同时重新构建 frontend 与 backend，不能只重启容器。
+- 单文件上限同时编译进 web 镜像的前端上传提示，并传给后端运行配置；修改 `APP_UPLOAD_MAX_BYTES` 后必须同时重新构建 web 与 backend，不能只重启容器。
 - 系统只管理自身生成的 `/uploads/backgrounds/{32位小写十六进制}.{jpg|png}` 文件。当前 PC/移动端配置引用始终受保护；未被任何站点配置引用的文件保留 24 小时后才可回收。
 - 孤儿清理默认在启动 1 分钟后执行，此后每 6 小时执行一次，上传新图前也会先清理；读取配置引用失败时整次清理会跳过，不会冒险删除文件。
 - 公开首页的公告、标题、简介、搜索、分类、书签和页脚统一使用当前字体色的完整不透明值，不再派生灰色文字层级；字体色设为纯黑时全页文字均为纯黑。
@@ -294,54 +352,37 @@
 - `POST /api/admin/data/import/{previewToken}/confirm`：确认并创建异步导入任务。
 - `GET /api/admin/data/import/jobs/{jobId}`：查询当前管理员创建的任务。
 
-可移植 ZIP 适合站点内容迁移和管理员自助恢复，但不替代灾难恢复备份。整站恢复还必须保存 PostgreSQL、上传卷、源码、镜像引用、加密后的环境配置，以及独立加密保存的 `database_config` 卷；当前项目运维脚本不会把最后一项打入普通备份。
+可移植 ZIP 适合站点内容迁移和管理员自助恢复，但不替代灾难恢复备份。整站恢复还必须保存数据库服务商生成且验证过的 PostgreSQL 备份、上传卷、源码或发行清单、镜像引用、加密后的环境配置，以及独立加密保存的 `database_config` 卷。
 
-## Nginx 路由
+## Web 容器的 Nginx 路由
 
-- `/`：转发到前端容器。
+- `/`：直接提供构建进 web 镜像的前端静态文件。
 - `/api`：转发到后端容器并保留原始路径。
 - `POST /api/admin/auth/login`：按来源 IP 限制为平均每分钟 5 次、允许 5 次突发；超限返回统一 JSON 格式的 `429`。
 - `POST /api/install/database/test` 与 `POST /api/install/database/configure`：共享平均每分钟 3 次、允许 3 次突发的数据库配置预算；`POST /api/install/check` 与 `POST /api/install/complete` 使用另一组同额度预算，避免一次合法六步安装流程消耗掉自己的完成额度。数据库凭据端点不写访问日志且请求体只在内存缓冲，匿名状态查询另限为每分钟 30 次。
 - `POST /api/admin/data/import/preview`：独立允许 66MiB 请求体并使用 120 秒上游读取超时，应用层仍严格限制 ZIP 为 64MiB。
-- 当前限流键使用入口 Nginx 直接看到的连接地址。若前面还有 Cloudflare、宿主机 Nginx 或其他 HTTPS 反向代理，必须只针对该可信代理配置 `set_real_ip_from`、对应的 `real_ip_header` 以及受信的 HTTPS 协议信息，并把项目 Nginx 入口限制在 loopback/私有网络。仓库配置会把 `X-Forwarded-Proto` 覆写成自身 `$scheme`，所以外层 TLS 代理不是开箱即用；不要直接信任任意客户端传入的转发头，否则来源和安全协议都可被伪造。未配置真实来源恢复时，所有访客还可能共用上游代理的同一个登录额度。
+- 默认限流键使用 web Nginx 直接看到的连接地址。只有同时启用 `WEB_TRUST_PROXY_HEADERS=true`、收窄 `APP_BIND_ADDRESS` 并匹配 `WEB_TRUSTED_PROXY_CIDR` 时，才恢复可信代理转发的真实客户端地址与原始协议；否则会安全回退到直接连接地址和 web 自身协议。错误地关闭恢复会使所有访客共用代理地址的限流额度，错误地扩大信任则会允许伪造来源。
 - `/uploads/`：从持久化上传卷直接提供静态文件。
 - `/swagger-ui/`、`/v3/api-docs`、`/doc.html`：转发到后端接口文档；生产默认由后端关闭。
 - `/healthz`：Nginx 自身健康检查。
 
 ## PostgreSQL 初始化、迁移与灾难恢复
 
-根目录 `database/init.sql` 是 Compose 第一次创建内置 PostgreSQL 卷时执行的初始化资源；`nav-backend/src/main/resources/schema-postgresql.sql` 会打包进后端，并由安装向导初始化用户明确确认的空白外部数据库。两份文件必须保持语义同步，包括完整表结构、约束、种子数据以及 `schema_migration` 中登记的迁移文件名和 SHA-256；修改其中任一份时必须同步修改并校验另一份。生产 profile 不自动执行 DDL。内置 PostgreSQL 由 `database/migrations/` 中不可修改的校验和迁移与 `ops/migrate.sh` 升级；外部 PostgreSQL 目前没有项目内置的升级命令，后续 schema 版本变更必须在服务商备份后按受控流程执行并校验实例 UUID，不能运行会操作未使用内置库的 `ops/migrate.sh`。
+`nav-backend/src/main/resources/schema-postgresql.sql` 是唯一权威初始化资源，会打包进后端，并由安装向导初始化用户明确确认的空白外部数据库。`database/migrations/` 保存已经登记的不可修改迁移历史及 SHA-256，不能改写已发布文件。
 
-当前迁移链从 `20260812_0001_postgresql_baseline.sql` 开始，`20260814_0002_web_install_state.sql` 增加网页安装状态，`20260815_0003_install_instance_identity.sql` 增加跨运行配置核验的数据库实例 UUID。新库由初始化 SQL 创建完整结构并登记三项迁移；已有库必须在新版后端启动前运行 `ops/migrate.sh`。脚本会拒绝执行校验和与登记值不一致的迁移。生产默认关闭传统环境变量引导，由一次性网页安装创建首位管理员；即使管理员被删除，持久化的安装完成标记也不会让安装向导或传统引导自动重开。
+当前发行版不提供对外部 PostgreSQL 自动执行升级迁移的脚本。升级前必须阅读对应版本发布说明；若新版本含数据库迁移，应先在服务商创建并验证可恢复快照，再按该版本提供的受控步骤升级数据库并校验实例 UUID，最后才更新应用镜像。没有明确迁移说明时，不要把历史迁移目录整体重复执行到现有数据库。其他数据库的旧结构和一次性转换脚本已从仓库移除，非 PostgreSQL 站点不能直接使用当前发行包升级。
 
-从项目旧 MySQL 版本升级时：
+外部数据库整站保护至少包括：数据库服务商的加密备份与恢复演练、后台可移植 ZIP、上传卷、加密后的 `.env`、镜像版本，以及单独加密保存的 `database_config` 卷。该卷包含明文连接凭据、可选 CA 和实例身份标记；仅有数据库快照和上传文件仍不足以恢复应用连接。当前项目没有在该卷丢失后重新关联既有外部数据库的受支持流程，恢复配置卷时必须保持目录 `0700`、文件 `0600`。
 
-1. 先对 MySQL、上传卷、源码、`.env` 和镜像引用做完整备份并复验 SHA-256。
-2. 使用新的 `POSTGRES_VOLUME_NAME` 启动 PostgreSQL，切勿复用或删除 `xydh-nav_mysql_data`。
-3. 设置 `CONFIRM_MIGRATION=MYSQL-TO-POSTGRESQL` 后运行 `ops/migrate-mysql-to-postgresql.sh`。脚本只读 MySQL、在单事务内写入 PostgreSQL，并逐表比较规范化 JSON 与整体摘要。
-4. 比较通过后再部署连接 PostgreSQL 的后端；旧 MySQL 容器和卷保留为回退锚点。
-
-`database/legacy-mysql/` 只保存旧版 MySQL schema 和历史迁移，不能对 PostgreSQL 执行。一次性迁移脚本默认拒绝覆盖已经包含管理员的 PostgreSQL 目标，防止误把旧快照重复写回线上库。
-
-整站运维脚本必须在受控项目目录执行，`.env` 权限必须为 `0600`：
-
-- `ops/backup.sh <标签>`：生成 PostgreSQL custom dump、上传卷、可构建源码、迁移登记、计数、镜像引用和校验清单；设置 `BACKUP_AGE_RECIPIENT` 时才会保存 age 加密的环境文件。它不包含 `database_config` 卷。
-- `ops/verify-backup.sh <目录>`：复验 SHA-256、manifest、归档路径/链接、文件权限和 `pg_restore` 可读性。
-- `ops/restore-drill.sh <目录>`：在批次命名的新 PostgreSQL/上传卷中恢复并核对计数、外键、默认搜索引擎和文件数，默认验收后只删除带精确演练标签的临时资源。
-- `ops/restore.sh <目录>`：默认只恢复到新卷，不接入生产；只有同时提供 `--activate` 与 `CONFIRM_RESTORE=RESTORE-PRODUCTION` 才切换，失败自动切回原卷，原卷始终保留。
-- `ops/rollback-release.sh <后端镜像> <前端镜像>`：只切换已存在的应用镜像，不更换数据库或上传卷。
-
-当前 `ops/backup.sh`、`ops/migrate.sh`、正式恢复切换、MySQL 转换和版本回滚只支持内置 PostgreSQL。脚本会读取后端专用配置卷并在检测到 `EXTERNAL` 时失败关闭，绝不会继续备份或迁移未被应用使用的本地 PostgreSQL。外部数据库部署应使用数据库服务商提供的加密备份/恢复能力，并同时保存上传卷与后台可移植 ZIP；在项目增加受控外部数据库客户端和实例 UUID 校验前，不应把内置脚本称为外部数据库整站备份。
-
-安装向导管理的内置模式在同一宿主机恢复时依赖原有 `database_config` 卷；跨宿主机恢复时必须从独立备份还原，否则当前脚本不会重建配置与实例身份状态。外部模式还必须把该卷做加密异机备份，因为它包含明文连接凭据、可选 CA 证书和实例身份标记；仅有服务商数据库备份、上传卷和后台可移植 ZIP 仍不足以恢复应用连接。当前项目没有在该卷丢失后重新关联既有外部数据库的受支持流程。恢复配置卷时保持目录 `0700`、文件 `0600`。
+`ops/rollback-release.sh <后端镜像> <web镜像>` 仅切换已经拉取到本机的应用镜像，不修改数据库、`database_config` 或上传卷。执行前必须同时提供 `CONFIRM_ROLLBACK=ROLLBACK-RELEASE` 和 `CONFIRM_EXTERNAL_DATABASE_BACKUP=EXTERNAL-DATABASE-BACKUP-VERIFIED`；代码回滚不能代替数据库回滚，也不能保证新 schema 与旧应用兼容。
 
 绝不要对需要保留的环境执行 `docker compose down -v`、`docker volume prune` 或带 `--remove-orphans` 的切换命令。备份至少应再复制一份到异机/对象存储并定期执行恢复演练；只存在同一虚拟机上的备份不能覆盖宿主机磁盘故障。
 
 ## 安全提醒
 
-- 上线前务必更换数据库、Redis、管理员密码以及 `JWT_SECRET`，不要提交 `.env`。
+- 上线前务必为外部数据库创建专用最小权限账号，并更换数据库、Redis、管理员密码以及 `JWT_SECRET`，不要提交 `.env` 或 `database_config` 的任何副本。
 - 管理员密码应遵守账号安全页的强度规则并定期更新；轮换 `JWT_SECRET` 会使所有现有 JWT 失效。
-- 生产环境必须在项目 Nginx 同层终止 HTTPS，或采用只信任明确代理 IP、且项目入口仅对 loopback/私网开放的定制代理配置；仓库默认配置不能直接套在外层 TLS 代理后宣称已安全启用 HTTPS。跨域来源还应按实际域名限制。
+- 生产环境必须使用 HTTPS；使用 1Panel OpenResty 等外层代理时，必须同时限制 web 入口、防止绕过，并只信任实际即时代理地址。跨域来源还应按实际域名限制。
 - 定期轮换密钥、备份数据库和上传文件，并及时更新基础镜像。
 - Swagger/OpenAPI 在生产 profile 默认关闭；只应在受控网络中临时设置 `OPENAPI_ENABLED=true`，使用完立即关闭。
 - 背景图片接口同时校验 MIME、文件魔数、图像格式、尺寸和文件大小；普通 `/api/` 请求体上限为 12MiB，图片业务层最高接受 10MiB。只有数据包预检精确入口允许 66MiB multipart 请求，ZIP 解析器仍限制归档和总展开量为 64MiB、单条目为 16MiB。

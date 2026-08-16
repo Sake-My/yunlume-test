@@ -2,7 +2,6 @@ package com.example.nav.module.install.service;
 
 import com.example.nav.common.config.DatabaseInstallProperties;
 import com.example.nav.common.exception.BusinessException;
-import com.example.nav.module.install.model.DatabaseConnectionMode;
 import com.example.nav.module.install.model.DatabaseConnectionSpec;
 import com.example.nav.module.install.model.DatabaseSchemaState;
 import com.example.nav.module.install.model.DatabaseSslMode;
@@ -86,7 +85,6 @@ class DatabaseConnectionTicketStoreTest {
 
     private DatabaseConnectionSpec spec() {
         return new DatabaseConnectionSpec(
-                DatabaseConnectionMode.EXTERNAL,
                 "database.example.com",
                 5432,
                 "navigation",

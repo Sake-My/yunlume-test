@@ -24,7 +24,6 @@ import { useInstallStore } from '@/stores/install.store'
 import type {
   CompleteInstallationPayload,
   InstallCheckResult,
-  InstallDatabaseMode,
   InstallDatabaseSslMode,
   InstallDatabaseTestResult,
   InstallEnvironmentCheck,
@@ -81,11 +80,9 @@ const databaseTest = ref<InstallDatabaseTestSummary | null>(null)
 const databaseTicket = ref('')
 const databaseConfigured = ref(false)
 const databaseStepWasUsed = ref(false)
-const configuredDatabaseModeKnown = ref(false)
 const form = reactive<InstallForm>({
   installToken: '',
   database: {
-    mode: 'EMBEDDED',
     host: '',
     port: 5432,
     database: '',
@@ -110,7 +107,6 @@ const authStore = useAuthStore()
 const router = useRouter()
 const insecureTransport = typeof window !== 'undefined' && window.location.protocol !== 'https:'
 const status = computed(() => installStore.status)
-const databaseMode = computed<InstallDatabaseMode>(() => form.database.mode)
 const databaseTestReady = computed(() => Boolean(
   databaseTest.value
   && databaseTicket.value
@@ -134,11 +130,9 @@ const databaseSchemaLabel = computed(() => (
   databaseTest.value ? installDatabaseSchemaLabel(databaseTest.value.schemaState) : ''
 ))
 const databaseConfigurationLabel = computed(() => (
-  !configuredDatabaseModeKnown.value
-    ? '已配置 PostgreSQL（已通过检查）'
-    : databaseMode.value === 'EMBEDDED'
-      ? '内置 PostgreSQL（已通过测试）'
-      : '外部 PostgreSQL（已通过测试）'
+  databaseStepWasUsed.value
+    ? '外部 PostgreSQL（已通过测试）'
+    : '外部 PostgreSQL（已通过检查）'
 ))
 const databaseSslModeHelp = computed(() => (
   SSL_MODE_OPTIONS.find((item) => item.value === form.database.sslMode)?.help ?? ''
@@ -225,12 +219,8 @@ function installRequestErrorMessage(error: unknown, statusCode: number | undefin
   return error instanceof Error && error.message ? error.message : fallback
 }
 
-function skipExternalDatabaseValidation(): boolean {
-  return form.database.mode !== 'EXTERNAL'
-}
-
 function databaseUsesCaCertificate(): boolean {
-  return form.database.mode === 'EXTERNAL' && form.database.sslMode !== 'REQUIRE'
+  return form.database.sslMode !== 'REQUIRE'
 }
 
 function isValidCaCertificatePem(value: string): boolean {
@@ -317,7 +307,6 @@ const rules: FormRules = {
   'database.host': [
     {
       validator: (_rule, value, callback) => {
-        if (skipExternalDatabaseValidation()) return callback()
         if (typeof value !== 'string' || !value) return callback(new Error('请输入 PostgreSQL 主机名或 IP 地址'))
         if (value !== value.trim() || !isValidDatabaseHost(value)) {
           return callback(new Error('请输入不含协议、路径、账号或空格的 DNS 主机名、IPv4 或 IPv6 地址'))
@@ -330,7 +319,6 @@ const rules: FormRules = {
   'database.port': [
     {
       validator: (_rule, value, callback) => {
-        if (skipExternalDatabaseValidation()) return callback()
         const port = Number(value)
         if (!Number.isInteger(port) || port < 1 || port > 65535) {
           return callback(new Error('端口必须是 1–65535 之间的整数'))
@@ -343,7 +331,6 @@ const rules: FormRules = {
   'database.database': [
     {
       validator: (_rule, value, callback) => {
-        if (skipExternalDatabaseValidation()) return callback()
         if (typeof value !== 'string' || !value) return callback(new Error('请输入数据库名称'))
         if (value !== value.trim() || !DATABASE_NAME_PATTERN.test(value)) {
           return callback(new Error('数据库名称只能包含英文字母、数字、点、下划线和短横线，且不超过 63 个字符'))
@@ -356,7 +343,6 @@ const rules: FormRules = {
   'database.username': [
     {
       validator: (_rule, value, callback) => {
-        if (skipExternalDatabaseValidation()) return callback()
         if (typeof value !== 'string' || !value) return callback(new Error('请输入数据库用户名'))
         if (!isTrimmedSingleLine(value) || value.length > 128) {
           return callback(new Error('数据库用户名应为首尾无空格的单行文字，且不超过 128 个字符'))
@@ -369,7 +355,7 @@ const rules: FormRules = {
   'database.password': [
     {
       validator: (_rule, value, callback) => {
-        if (skipExternalDatabaseValidation() || databaseTestReady.value) return callback()
+        if (databaseTestReady.value) return callback()
         if (typeof value !== 'string' || !value) return callback(new Error('请输入数据库密码'))
         if (value.length > 1024) return callback(new Error('数据库密码长度不能超过 1024 个字符'))
         callback()
@@ -380,7 +366,6 @@ const rules: FormRules = {
   'database.sslMode': [
     {
       validator: (_rule, value, callback) => {
-        if (skipExternalDatabaseValidation()) return callback()
         if (!SSL_MODE_OPTIONS.some((item) => item.value === value)) {
           return callback(new Error('请选择有效的 SSL 模式'))
         }
@@ -408,8 +393,7 @@ const rules: FormRules = {
     {
       validator: (_rule, value, callback) => {
         if (
-          form.database.mode === 'EXTERNAL'
-          && form.database.sslMode === 'REQUIRE'
+          form.database.sslMode === 'REQUIRE'
           && value !== true
         ) {
           return callback(new Error('使用 REQUIRE 前必须确认未验证证书和主机名的风险'))
@@ -486,21 +470,6 @@ function invalidateDatabaseTest() {
   environmentCheck.value = null
 }
 
-function handleDatabaseModeChange() {
-  scrubDatabaseAuthorization(true)
-  environmentCheck.value = null
-  void formRef.value?.clearValidate([
-    'database.host',
-    'database.port',
-    'database.database',
-    'database.username',
-    'database.password',
-    'database.sslMode',
-    'database.caCertificatePem',
-    'database.acknowledgeUnverifiedTls',
-  ])
-}
-
 function handleDatabaseSslModeChange() {
   invalidateDatabaseTest()
   if (form.database.sslMode === 'REQUIRE') form.database.caCertificatePem = ''
@@ -543,7 +512,6 @@ async function handleCaCertificateFile(event: Event) {
 }
 
 function databaseValidationFields(): string[] {
-  if (databaseMode.value === 'EMBEDDED') return ['installToken']
   const fields = [
     'installToken',
     'database.host',
@@ -643,7 +611,6 @@ async function configureDatabase() {
     scrubDatabaseAuthorization(false)
     databaseConfigured.value = true
     databaseStepWasUsed.value = true
-    configuredDatabaseModeKnown.value = true
 
     if (result.installed) {
       await refreshStatus(true)
@@ -696,7 +663,6 @@ async function nextStep() {
     if (status.value?.state === 'REQUIRED') {
       databaseConfigured.value = true
       databaseStepWasUsed.value = false
-      configuredDatabaseModeKnown.value = false
       await checkEnvironment()
       return
     }
@@ -892,7 +858,7 @@ onBeforeUnmount(() => {
       <div class="install-page__story-copy">
         <p>FIRST-RUN SETUP</p>
         <h1>几步完成部署，<br />建立你的导航起点。</h1>
-        <span>连接内置或外部 PostgreSQL，检查运行环境并创建首位管理员。安装完成后，此入口会自动关闭。</span>
+        <span>连接外部 PostgreSQL，检查运行环境并创建首位管理员。安装完成后，此入口会自动关闭。</span>
       </div>
       <small>ILINKS NAVIGATION SYSTEM · SECURE INSTALLATION</small>
     </aside>
@@ -970,7 +936,7 @@ onBeforeUnmount(() => {
                 type="info"
                 :closable="false"
                 title="这是尚未配置数据库的新实例"
-                description="验证安装口令后，可选择内置 PostgreSQL 或连接外部 PostgreSQL。"
+                description="验证安装口令后，请连接由你维护的外部 PostgreSQL。"
                 show-icon
               />
               <el-alert
@@ -978,7 +944,7 @@ onBeforeUnmount(() => {
                 type="info"
                 :closable="false"
                 title="已确认这是尚未安装的新实例"
-                description="数据库连接已由服务器管理。验证安装口令后将直接执行完整环境检查。"
+                description="外部 PostgreSQL 连接已由服务器配置。验证安装口令后将直接执行完整环境检查。"
                 show-icon
               />
             </div>
@@ -1009,31 +975,15 @@ onBeforeUnmount(() => {
               <span><Coin /></span>
               <div>
                 <h3 id="install-database-title">配置 PostgreSQL</h3>
-                <p>可直接使用 Compose 内置数据库，也可连接由你维护的外部 PostgreSQL。</p>
+                <p>连接由你维护的外部 PostgreSQL，验证权限、TLS 与数据库结构。</p>
               </div>
             </div>
 
-            <fieldset class="install-database-mode">
-              <legend>数据库来源</legend>
-              <el-radio-group
-                v-model="form.database.mode"
-                :disabled="databaseFieldsLocked"
-                aria-label="选择 PostgreSQL 来源"
-                @change="handleDatabaseModeChange"
-              >
-                <el-radio-button value="EMBEDDED">内置 PostgreSQL</el-radio-button>
-                <el-radio-button value="EXTERNAL">外部 PostgreSQL</el-radio-button>
-              </el-radio-group>
-              <p v-if="databaseMode === 'EMBEDDED'">
-                使用服务器部署配置中的 Compose PostgreSQL；连接账号与密码继续由服务器环境变量管理。
-              </p>
-              <p v-else>
-                请提前创建空白、专用的 PostgreSQL 数据库，并使用非 superuser、但具备建表、索引、序列和迁移所需 DDL 权限的账号。
-              </p>
-            </fieldset>
+            <p class="install-database-guidance">
+              请提前创建空白、专用的 PostgreSQL 数据库，并使用非 superuser、但具备建表、索引、序列和迁移所需 DDL 权限的账号。
+            </p>
 
             <div
-              v-if="databaseMode === 'EXTERNAL'"
               class="install-database-fields"
               :aria-busy="testingDatabase || configuringDatabase"
             >

@@ -1,14 +1,12 @@
 import type {
   ConfigureInstallDatabaseResult,
   InstallDatabaseConfig,
-  InstallDatabaseMode,
   InstallDatabaseSchemaState,
   InstallDatabaseSslMode,
   InstallDatabaseTestResult,
 } from '@/types/install'
 
 export interface InstallDatabaseFormValue {
-  mode: InstallDatabaseMode
   host: string
   port: number
   database: string
@@ -19,7 +17,6 @@ export interface InstallDatabaseFormValue {
   acknowledgeUnverifiedTls: boolean
 }
 
-const DATABASE_MODES: InstallDatabaseMode[] = ['EMBEDDED', 'EXTERNAL']
 const SSL_MODES: InstallDatabaseSslMode[] = [
   'REQUIRE',
   'VERIFY_CA',
@@ -35,10 +32,7 @@ const TICKET_PATTERN = /^[0-9a-f]{64}$/
 export function buildInstallDatabaseConfig(
   form: InstallDatabaseFormValue,
 ): InstallDatabaseConfig {
-  if (form.mode === 'EMBEDDED') return { mode: 'EMBEDDED' }
-
   const config: InstallDatabaseConfig = {
-    mode: 'EXTERNAL',
     host: form.host.trim(),
     port: Number(form.port),
     database: form.database.trim(),
@@ -116,10 +110,6 @@ export function installDatabaseSchemaLabel(state: InstallDatabaseSchemaState): s
   if (state === 'EMPTY') return '空数据库，可初始化结构'
   if (state === 'READY_UNINSTALLED') return '结构完整，尚未创建站点'
   return '已存在完成安装的站点'
-}
-
-export function isInstallDatabaseMode(value: unknown): value is InstallDatabaseMode {
-  return typeof value === 'string' && DATABASE_MODES.includes(value as InstallDatabaseMode)
 }
 
 export function isInstallDatabaseSslMode(value: unknown): value is InstallDatabaseSslMode {

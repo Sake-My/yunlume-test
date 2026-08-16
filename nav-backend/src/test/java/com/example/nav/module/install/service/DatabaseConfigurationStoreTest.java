@@ -1,7 +1,6 @@
 package com.example.nav.module.install.service;
 
 import com.example.nav.common.config.DatabaseInstallProperties;
-import com.example.nav.module.install.model.DatabaseConnectionMode;
 import com.example.nav.module.install.model.DatabaseConnectionSpec;
 import com.example.nav.module.install.model.DatabaseSslMode;
 import org.junit.jupiter.api.Test;
@@ -29,10 +28,9 @@ class DatabaseConfigurationStoreTest {
         DatabaseConfigurationStore store = new DatabaseConfigurationStore(properties);
         assertTrue(store.isUnconfiguredSource());
         store.verifyWritable();
-        store.beginConfiguration("EXTERNAL");
+        store.beginConfiguration();
 
         store.saveExternal(new DatabaseConnectionSpec(
-                        DatabaseConnectionMode.EXTERNAL,
                         "db.example.com",
                         5432,
                         "navigation",
@@ -43,7 +41,7 @@ class DatabaseConfigurationStoreTest {
                         java.util.List.of("203.0.113.10")),
                 "jdbc:postgresql://db.example.com:5432/navigation?sslmode=require&currentSchema=public",
                 "e38440cb-07d9-4fdf-9800-5a4ef185ee61");
-        store.markConfigured("EXTERNAL", "e38440cb-07d9-4fdf-9800-5a4ef185ee61");
+        store.markConfigured("e38440cb-07d9-4fdf-9800-5a4ef185ee61");
 
         assertTrue(store.hasPersistedConnection());
         assertFalse(store.isUnconfiguredSource());
@@ -73,7 +71,7 @@ class DatabaseConfigurationStoreTest {
     void pendingMarkerIsFailClosedUntilExplicitlyClearedBeforeRemoteMutation() {
         DatabaseConfigurationStore store = new DatabaseConfigurationStore(properties());
         store.verifyWritable();
-        store.beginConfiguration("EXTERNAL");
+        store.beginConfiguration();
 
         assertTrue(store.hasInvalidOrPendingArtifact());
         assertFalse(store.isUnconfiguredSource());

@@ -11,8 +11,12 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx \
+    NGINX_ENVSUBST_FILTER=^WEB_
+COPY nginx/nginx.conf.template /etc/nginx/templates/nginx.conf.template
+COPY nginx/05-validate-proxy-env.envsh /docker-entrypoint.d/05-validate-proxy-env.envsh
+RUN chmod 0755 /docker-entrypoint.d/05-validate-proxy-env.envsh
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1/healthz || exit 1

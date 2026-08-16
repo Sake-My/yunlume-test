@@ -1,6 +1,6 @@
 # nav-backend
 
-基于 Java 17、Spring Boot 3、MyBatis-Plus、JWT、BCrypt 的导航站后端。默认使用 PostgreSQL 兼容模式的内存 H2，启动后自动生成本地联调数据；生产环境使用 PostgreSQL 17，并预留 Redis 缓存配置。
+基于 Java 17、Spring Boot 3、MyBatis-Plus、JWT、BCrypt 的导航站后端。默认使用 PostgreSQL 兼容模式的内存 H2，启动后自动生成本地联调数据；生产环境只连接部署者提供的外部 PostgreSQL 与外部 Redis。
 
 ## 快速启动
 
@@ -28,9 +28,9 @@ H2 JDBC URL 为 `jdbc:h2:mem:navdb`，用户名 `sa`，密码为空。
 密码：Local!Start2026
 ```
 
-密码不会以明文写入业务数据库。生产新部署默认由 `/install` 网页向导选择内置或外部 PostgreSQL、验证并按需初始化空白专用数据库，再创建首位管理员；Redis 与 JWT 密钥仍必须在后端启动前通过环境变量提供。外部数据库连接凭据保存在仅后端挂载的所有者私有配置卷中，不进入浏览器存储、URL 或日志。需要无人值守初始化时，也可显式启用 `NAV_BOOTSTRAP_ENABLED=true`，由 `ADMIN_PASSWORD` 完成传统引导。两种方式都复用相同的强密码策略并用 BCrypt 保存，后台改密不会回写环境变量。
+密码不会以明文写入业务数据库。生产新部署默认由 `/install` 网页向导连接外部 PostgreSQL、验证并按需初始化空白专用数据库，再创建首位管理员；外部 Redis 连接参数与 JWT 密钥必须在后端启动前通过环境变量提供。外部数据库连接凭据保存在仅后端挂载的所有者私有配置卷中，不进入浏览器存储、URL 或日志。需要无人值守初始化时，也可显式启用 `NAV_BOOTSTRAP_ENABLED=true`，由 `ADMIN_PASSWORD` 完成传统引导。两种方式都复用相同的强密码策略并用 BCrypt 保存，后台改密不会回写环境变量。
 
-根目录当前单一 Compose 编排会无条件校验 `POSTGRES_PASSWORD` 并启动内置 PostgreSQL；选择外部数据库后，后端业务连接会切换到外部库，但未使用的内置服务不会自动停止。它不能作为外部库备份，检测到 `EXTERNAL` 时项目运维脚本会失败关闭；完全不启动内置 PostgreSQL 需要部署者自行维护 Compose override。
+生产环境只支持外部 PostgreSQL 14 或更高版本。安装向导要求专用、非超级用户角色，强制 TLS，并通过一次性连接票据、实例 UUID 与后端私有运行配置防止改库和身份漂移。项目不提供或启动 PostgreSQL 服务，也不会代替数据库服务商执行备份与恢复。
 
 ## 统一响应
 
@@ -52,7 +52,7 @@ HTTP 状态和响应中的 `code` 保持一致。参数错误、未认证、数�
 |---|---|---|
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/install/status` | 首次安装状态，不返回口令或内部连接信息 |
-| POST | `/api/install/database/test` | 使用 `X-Install-Token` 测试内置/外部 PostgreSQL，并签发短期单次 ticket |
+| POST | `/api/install/database/test` | 使用 `X-Install-Token` 测试外部 PostgreSQL，并签发短期单次 ticket |
 | POST | `/api/install/database/configure` | 消费数据库 ticket，按确认初始化空库并持久化后端连接配置 |
 | POST | `/api/install/check` | 使用 `X-Install-Token` 检查已接管数据库、上传目录和 Redis |
 | POST | `/api/install/complete` | 使用 `X-Install-Token` 完成一次性初始化；安装完成后永久拒绝 |
@@ -167,7 +167,7 @@ SPRING_PROFILES_ACTIVE=prod java -jar target/nav-backend-0.1.0.jar
 |---|---|
 | `SERVER_PORT` | `8080` |
 | `SPRING_PROFILES_ACTIVE` | `local` |
-| `DB_URL` | PostgreSQL JDBC URL，例如 `jdbc:postgresql://postgres:5432/nav_system` |
+| `DB_URL` | 外部 PostgreSQL JDBC URL，例如 `jdbc:postgresql://db.example.com:5432/nav_system` |
 | `DB_USERNAME` | `nav` |
 | `DB_PASSWORD` | 无生产默认值，必须配置 |
 | `JWT_SECRET` | JWT HS256 密钥，至少 32 字节，生产必须覆盖 |
@@ -188,10 +188,15 @@ SPRING_PROFILES_ACTIVE=prod java -jar target/nav-backend-0.1.0.jar
 | `NAV_DATABASE_TICKET_TTL_SECONDS` | 数据库测试 ticket 有效期，限制为 30–900 秒，默认 `300` |
 | `NAV_DATABASE_AUTO_RESTART` | 配置数据库后是否自动退出并由容器重启，Compose 默认 `true` |
 | `CORS_ALLOWED_ORIGINS` | 逗号分隔的前端来源 |
-| `CACHE_TYPE` | `simple`；使用 Redis 时设为 `redis` |
-| `REDIS_HOST` | `redis` |
-| `REDIS_PORT` | `6379` |
-| `REDIS_PASSWORD` | 空 |
+| `CACHE_TYPE` | 本地默认 `simple`；`prod` 必须显式为 `redis` |
+| `REDIS_HOST` | 外部 Redis 主机；生产必填 |
+| `REDIS_PORT` | 外部 Redis 端口，默认 `6379` |
+| `REDIS_USERNAME` | ACL 用户名，可选 |
+| `REDIS_PASSWORD` | 外部 Redis 密码；生产必填，不会写入 URL或日志 |
+| `REDIS_DATABASE` | Redis 逻辑库编号，默认 `0` |
+| `REDIS_SSL_ENABLED` | 是否启用 TLS，生产默认 `true`；仅受信任私网测试显式设为 `false` |
+| `REDIS_CONNECT_TIMEOUT` | 建连超时，默认 `3s`，有效范围大于 0 且不超过 60 秒 |
+| `REDIS_READ_TIMEOUT` | 读写命令超时，默认 `3s`，有效范围大于 0 且不超过 60 秒 |
 | `APP_UPLOAD_MAX_BYTES` | 单张背景图上限，允许 `1`–`10485760` 字节，默认 `10485760`（10MiB） |
 | `APP_UPLOAD_MAX_TOTAL_BYTES` | 受管背景图片总量上限，默认 `1073741824`（1GB） |
 | `APP_UPLOAD_MAX_FILES` | 受管背景图片数量上限，默认 `500` |
@@ -199,11 +204,13 @@ SPRING_PROFILES_ACTIVE=prod java -jar target/nav-backend-0.1.0.jar
 | `APP_UPLOAD_CLEANUP_INTERVAL_MS` | 清理间隔，默认 `21600000`（6小时） |
 | `APP_UPLOAD_CLEANUP_INITIAL_DELAY_MS` | 启动后首次清理延迟，默认 `60000`（1分钟） |
 
-根目录 `../database/init.sql` 是 Compose 第一次创建内置 PostgreSQL 卷时执行的初始化资源；`src/main/resources/schema-postgresql.sql` 是打包进后端、由网页安装向导初始化用户明确确认的空白外部数据库的安装资源。两者必须保持语义同步，包括完整结构、约束、种子数据及 `schema_migration` 登记的迁移文件名与 SHA-256。`prod` profile 不自动执行 DDL，默认 `NAV_DEMO_DATA_ENABLED=false`；网页安装只初始化站点名称和首位管理员，不会因为业务表为空而补写演示数据。传统运行时引导只有在显式启用、整个 `sys_user` 表为空且安装完成标记为空时才会创建管理员。
+`src/main/resources/schema-postgresql.sql` 是打包进后端、由网页安装向导初始化用户明确确认的空白外部数据库的安装资源，包含完整结构、约束、种子数据及 `schema_migration` 登记的迁移文件名与 SHA-256。`prod` profile 不自动执行 DDL，默认 `NAV_DEMO_DATA_ENABLED=false`；网页安装只初始化站点名称和首位管理员，不会因为业务表为空而补写演示数据。传统运行时引导只有在显式启用、整个 `sys_user` 表为空且安装完成标记为空时才会创建管理员。
 
-内置 PostgreSQL 迁移使用根目录 `../database/migrations/` 与 `../ops/migrate.sh`，每个已登记文件的 SHA-256 不得再修改。`20260812_0001_postgresql_baseline.sql` 是完整新结构的稳定基线标记，`20260814_0002_web_install_state.sql` 增加永久网页安装标记，`20260815_0003_install_instance_identity.sql` 增加数据库实例 UUID；已有内置库必须在新版后端启动前运行迁移脚本。外部 PostgreSQL 目前没有项目内置的升级命令；后续 schema 版本变更必须在服务商备份后按受控流程执行并校验实例 UUID，内置库脚本会对外部模式失败关闭。旧 MySQL schema 与五个历史迁移已移到 `../database/legacy-mysql/`，只供一次性 MySQL→PostgreSQL 转换和历史审计，不能在 PostgreSQL 上执行。
+每个已登记迁移文件的 SHA-256 不得再修改。`20260812_0001_postgresql_baseline.sql` 是完整新结构的稳定基线标记，`20260814_0002_web_install_state.sql` 增加永久网页安装标记，`20260815_0003_install_instance_identity.sql` 增加数据库实例 UUID。后续 schema 版本变更必须先在数据库服务商侧备份，再按受控流程执行并校验实例 UUID。
 
-`database_config` 卷属于安装状态与数据库实例身份，当前根目录 `ops/backup.sh`、恢复和演练脚本均不归档或重建它。内置模式的同宿主机恢复依赖原卷继续存在；跨宿主机恢复需要独立备份。外部模式的卷含明文连接凭据、可选 CA 和实例身份，必须加密异机保存并维持目录 `0700`、文件 `0600`；仅恢复数据库服务商备份、上传卷或可移植 ZIP 不能恢复应用连接，卷丢失后当前项目也没有受支持的既有外部库重新关联流程。
+`database_config` 卷属于安装状态与数据库实例身份，含明文连接凭据、可选 CA 和实例身份，必须加密异机保存并维持目录 `0700`、文件 `0600`；仅恢复数据库服务商备份、上传卷或可移植 ZIP 不能恢复应用连接，卷丢失后当前项目也没有受支持的既有外部库重新关联流程。
+
+生产 profile 会在启动阶段校验外部 Redis 的缓存类型、主机、端口、密码、逻辑库和超时范围，配置缺失时拒绝进入就绪状态。TLS 默认开启并使用 JVM 信任库校验证书；私有 CA 必须先安全导入运行镜像或 JVM truststore，不能通过关闭证书校验绕过。数据库尚未接管时 `/api/health` 仍返回 `INSTALLING` 以便打开安装页，但受口令保护的 `/api/install/check` 会真实探测 Redis 并在不可达时失败；安装完成后 Redis 故障会让 `/api/health` 失败关闭。
 
 新密码必须为 12–72 个字符、UTF-8 不超过 72 字节、不含空白，在大写字母、小写字母、数字和符号中至少包含三类，且不得包含用户名或复用当前密码。改密与 `logout-all` 均会使当前设备和其他设备上的旧 JWT 立即失效。
 
@@ -226,14 +233,14 @@ SPRING_PROFILES_ACTIVE=prod java -jar target/nav-backend-0.1.0.jar
 `POST /api/admin/upload/image` 只接受经过文件大小、声明 MIME（如有）、文件魔数、ImageIO 实际格式、尺寸及像素数校验的 JPG/PNG 背景图；不信任客户端原始文件名或扩展名。文件以 `/uploads/backgrounds/{32位小写十六进制}.{jpg|png}` 形式原子写入，只有这种服务端生成名称会参与容量统计和自动回收。
 
 - 背景图片默认单文件 10MiB、目录总量 1GB、文件数 500；超过总量或数量返回 `507 Insufficient Storage`。全局 multipart 为数据包预检保留 66MB 请求余量，但图片业务层独立拒绝大于 `10485760` 字节的值。
-- Compose 会把同一 `APP_UPLOAD_MAX_BYTES` 作为 `VITE_UPLOAD_MAX_BYTES` 编译进前端提示；修改该值后必须同时重新构建 frontend 和 backend，不能只重启现有容器。
+- Compose 会把同一 `APP_UPLOAD_MAX_BYTES` 作为 `VITE_UPLOAD_MAX_BYTES` 编译进 web 镜像的前端提示；修改该值后必须同时重新构建 web 和 backend，不能只重启现有容器。
 - 每次上传前先尝试清理，定时任务默认在启动 1 分钟后执行，之后每 6 小时执行。
 - `site_config.background_image` 与 `mobile_background_image` 当前引用的受管文件不会删除；未引用文件经过默认 24 小时宽限期后才可回收。
 - 读取站点配置引用失败时清理整次跳过；符号链接和不符合受管命名规则的文件不会被当作普通受管图片处理。
 
 入口 Nginx 对登录 POST 设置每来源 IP 平均每分钟 5 次、允许 5 次突发的限速；数据库测试/接管共享一组平均每分钟 3 次、允许 3 次突发的预算，安装检查/完成使用另一组同额度预算，避免合法首次安装流程互相占用额度；匿名安装状态查询限为每分钟 30 次。超限均返回统一 JSON `429`。这是部署网关策略，直接访问后端端口时不会生效。
 
-仓库内置 Nginx 只监听 HTTP，并会用自身 `$scheme` 覆写 `X-Forwarded-Proto`；在它前面直接增加 HTTPS/CDN 代理不是开箱即用，后端仍会把安装凭据请求判定为 HTTP。公网必须在项目 Nginx 同层终止 TLS，或定制它只接受白名单可信代理 IP 提供的真实客户端地址和 HTTPS 协议信息，同时把项目入口仅暴露给 loopback/私有网络。禁止无条件信任客户端的 `X-Forwarded-For` 或 `X-Forwarded-Proto`；否则限流键与安全协议都可被伪造。未恢复真实地址时，访客还会共享上游代理 IP 的同一额度。
+`web` 镜像内的 Nginx 默认忽略客户端传入的 `X-Forwarded-For` 与 `X-Forwarded-Proto`。接入 1Panel OpenResty 等 HTTPS 代理时，应把 `APP_BIND_ADDRESS` 收窄到明确的 loopback/私网地址并阻止客户端绕过代理，再设置 `WEB_TRUST_PROXY_HEADERS=true`，将 `WEB_TRUSTED_PROXY_CIDR` 限定为 web 实际看到的即时代理 `/32`、`/128` 或最窄隔离网段。配置校验会拒绝全网信任和泛监听组合；只有可信来源的真实客户端地址与原始协议才会传给后端并参与限流。不要为了方便扩大信任范围。
 
 ## 构建与测试
 

@@ -1,12 +1,12 @@
 # Local environment and secrets
 .env
-.env.local
-.env.*.local
+.env.*
+*.env
 !.env.example
+!**/.env.example
 
 # Private project and deployment notes
 jiyi.md
-jihua.md
 
 # Runtime database installer state and credentials
 database_config/
@@ -23,6 +23,8 @@ postgresql-ca.pem
 *.key
 *.p12
 *.pfx
+*.crt
+*.cer
 *.jks
 *.keystore
 id_rsa
@@ -48,6 +50,9 @@ uploads/
 .idea/
 .vscode/
 *.iml
+.classpath
+.project
+.settings/
 .DS_Store
 Thumbs.db
 

@@ -1,8 +1,10 @@
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: ${DB_URL:jdbc:postgresql://postgres:5432/nav_system}
-    username: ${DB_USERNAME:nav_user}
+    # Reserved placeholder used only until the installer persists an external
+    # PostgreSQL connection. Production deployments must not rely on defaults.
+    url: ${DB_URL:jdbc:postgresql://database.invalid:5432/unconfigured}
+    username: ${DB_USERNAME:unconfigured}
     # A fresh UNCONFIGURED deployment may intentionally have no active
     # datasource yet; persisted installer settings replace this on restart.
     password: ${DB_PASSWORD:}
@@ -16,10 +18,15 @@ spring:
       mode: never
   data:
     redis:
-      host: ${REDIS_HOST:redis}
+      host: ${REDIS_HOST:}
       port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD}
-      timeout: 2s
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:3s}
+      timeout: ${REDIS_READ_TIMEOUT:3s}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:true}
 
 springdoc:
   api-docs:
@@ -28,6 +35,15 @@ springdoc:
     enabled: ${OPENAPI_ENABLED:false}
 
 nav:
+  external-redis:
+    host: ${REDIS_HOST:}
+    port: ${REDIS_PORT:6379}
+    username: ${REDIS_USERNAME:}
+    password: ${REDIS_PASSWORD:}
+    database: ${REDIS_DATABASE:0}
+    ssl-enabled: ${REDIS_SSL_ENABLED:true}
+    connect-timeout: ${REDIS_CONNECT_TIMEOUT:3s}
+    read-timeout: ${REDIS_READ_TIMEOUT:3s}
   database-install:
     auto-restart: ${NAV_DATABASE_AUTO_RESTART:true}
   bootstrap:

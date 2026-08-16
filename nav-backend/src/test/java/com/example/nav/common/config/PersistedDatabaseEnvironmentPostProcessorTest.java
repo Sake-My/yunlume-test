@@ -11,7 +11,6 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.util.EnumSet;
 import java.util.Properties;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PersistedDatabaseEnvironmentPostProcessorTest {
@@ -20,11 +19,11 @@ class PersistedDatabaseEnvironmentPostProcessorTest {
     Path temporaryDirectory;
 
     @Test
-    void embeddedRuntimeMarkerRebuildsDatasourceFromDedicatedPostgresEnvironment() throws Exception {
+    void unsupportedPersistedDatabaseModeFailsClosed() throws Exception {
         Path config = temporaryDirectory.resolve("database.properties");
         Properties saved = new Properties();
         saved.setProperty("nav.database-config.format", "1");
-        saved.setProperty("nav.database-config.mode", "EMBEDDED");
+        saved.setProperty("nav.database-config.mode", "LOCAL");
         saved.setProperty("nav.database-config.expected-instance-id",
                 "00b61475-8c0d-4d22-a08d-c144e989fc36");
         try (OutputStream output = Files.newOutputStream(config)) {
@@ -34,7 +33,7 @@ class PersistedDatabaseEnvironmentPostProcessorTest {
         Properties committed = new Properties();
         committed.setProperty("nav.database-marker.format", "1");
         committed.setProperty("state", "CONFIGURED");
-        committed.setProperty("mode", "EMBEDDED");
+        committed.setProperty("mode", "LOCAL");
         committed.setProperty("instance-id", "00b61475-8c0d-4d22-a08d-c144e989fc36");
         try (OutputStream output = Files.newOutputStream(marker)) {
             committed.store(output, null);
@@ -56,22 +55,11 @@ class PersistedDatabaseEnvironmentPostProcessorTest {
                 .withProperty("NAV_INSTALL_COMPLETED_MARKER_FILE",
                         temporaryDirectory.resolve("install.completed").toString())
                 .withProperty("NAV_DATABASE_CA_FILE",
-                        temporaryDirectory.resolve("postgresql-ca.pem").toString())
-                .withProperty("POSTGRES_HOST", "postgres")
-                .withProperty("POSTGRES_PORT", "5432")
-                .withProperty("POSTGRES_DB", "navigation")
-                .withProperty("POSTGRES_USER", "nav-user")
-                .withProperty("POSTGRES_PASSWORD", "Database!Secret2026");
+                        temporaryDirectory.resolve("postgresql-ca.pem").toString());
 
-        new PersistedDatabaseEnvironmentPostProcessor()
-                .postProcessEnvironment(environment, null);
-
-        assertEquals("jdbc:postgresql://postgres:5432/navigation?sslmode=disable&currentSchema=public",
-                environment.getProperty("spring.datasource.url"));
-        assertEquals("nav-user", environment.getProperty("spring.datasource.username"));
-        assertEquals("Database!Secret2026", environment.getProperty("spring.datasource.password"));
-        assertEquals("00b61475-8c0d-4d22-a08d-c144e989fc36",
-                environment.getProperty("nav.database-config.expected-instance-id"));
+        assertThrows(IllegalStateException.class, () ->
+                new PersistedDatabaseEnvironmentPostProcessor()
+                        .postProcessEnvironment(environment, null));
     }
 
     @Test

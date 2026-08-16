@@ -6,8 +6,6 @@ export type InstallState =
   | 'NOT_READY'
   | 'UNKNOWN'
 
-export type InstallDatabaseMode = 'EMBEDDED' | 'EXTERNAL'
-
 export type InstallDatabaseSslMode =
   | 'REQUIRE'
   | 'VERIFY_CA'
@@ -16,13 +14,12 @@ export type InstallDatabaseSslMode =
 export type InstallDatabaseSchemaState = 'EMPTY' | 'READY_UNINSTALLED' | 'READY_INSTALLED'
 
 export interface InstallDatabaseConfig {
-  mode: InstallDatabaseMode
-  host?: string
-  port?: number
-  database?: string
-  username?: string
-  password?: string
-  sslMode?: InstallDatabaseSslMode
+  host: string
+  port: number
+  database: string
+  username: string
+  password: string
+  sslMode: InstallDatabaseSslMode
   caCertificatePem?: string
   acknowledgeUnverifiedTls?: boolean
 }

@@ -10,7 +10,6 @@ import {
 
 function externalForm(overrides: Partial<InstallDatabaseFormValue> = {}): InstallDatabaseFormValue {
   return {
-    mode: 'EXTERNAL',
     host: ' db.example.com ',
     port: 5432,
     database: ' navigation ',
@@ -24,15 +23,8 @@ function externalForm(overrides: Partial<InstallDatabaseFormValue> = {}): Instal
 }
 
 describe('installation database request shaping', () => {
-  it('never leaks stale external fields in embedded mode', () => {
-    expect(buildInstallDatabaseConfig(externalForm({ mode: 'EMBEDDED' }))).toEqual({
-      mode: 'EMBEDDED',
-    })
-  })
-
   it('trims identifiers and includes the CA only for certificate-verifying modes', () => {
     expect(buildInstallDatabaseConfig(externalForm())).toEqual({
-      mode: 'EXTERNAL',
       host: 'db.example.com',
       port: 5432,
       database: 'navigation',

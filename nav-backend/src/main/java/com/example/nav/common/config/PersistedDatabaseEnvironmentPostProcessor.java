@@ -92,67 +92,54 @@ public class PersistedDatabaseEnvironmentPostProcessor implements EnvironmentPos
         if (!mode.equals(marker.getProperty("mode"))) {
             throw new IllegalStateException("Persisted database modes do not match");
         }
-        if ("EXTERNAL".equals(mode)) {
-            copyRequired(properties, datasource, "spring.datasource.url");
-            copyRequired(properties, datasource, "spring.datasource.username");
-            copyRequired(properties, datasource, "spring.datasource.password");
-            copyRequired(properties, datasource, "spring.datasource.driver-class-name");
-            String url = properties.getProperty("spring.datasource.url");
-            if (!url.startsWith("jdbc:postgresql://")) {
-                throw new IllegalStateException("Persisted database URL is not schema-pinned");
-            }
-            Map<String, String> parameters = parseUniqueQuery(url);
-            String sslMode = parameters.get("sslmode");
-            boolean requireTls = "require".equals(sslMode);
-            boolean verifyCa = "verify-ca".equals(sslMode);
-            boolean verifyFull = "verify-full".equals(sslMode);
-            if (!(requireTls || verifyCa || verifyFull)) {
-                throw new IllegalStateException("Persisted external database TLS mode is unsafe");
-            }
-            if (!"public".equals(parameters.get("currentSchema"))
-                    || !"5".equals(parameters.get("connectTimeout"))
-                    || !"10".equals(parameters.get("socketTimeout"))
-                    || !"true".equals(parameters.get("tcpKeepAlive"))
-                    || !"xy-navigation-installer".equals(parameters.get("ApplicationName"))) {
-                throw new IllegalStateException("Persisted database URL parameters are invalid");
-            }
-            String rootCertificate = parameters.get("sslrootcert");
-            Set<String> expectedKeys = rootCertificate == null
-                    ? Set.of("sslmode", "currentSchema", "connectTimeout", "socketTimeout",
-                            "tcpKeepAlive", "ApplicationName")
-                    : Set.of("sslmode", "currentSchema", "connectTimeout", "socketTimeout",
-                            "tcpKeepAlive", "ApplicationName", "sslrootcert");
-            if (!parameters.keySet().equals(expectedKeys)) {
-                throw new IllegalStateException("Persisted database URL contains unknown parameters");
-            }
-            if (rootCertificate != null) {
-                if (requireTls) {
-                    throw new IllegalStateException("Unverified TLS mode must not load a CA file");
-                }
-                requireSecureFile(caFile, "Persisted PostgreSQL CA certificate");
-                if (!Path.of(rootCertificate).toAbsolutePath().normalize().equals(caFile)) {
-                    throw new IllegalStateException(
-                            "Persisted PostgreSQL CA certificate path does not match configuration");
-                }
-            } else if (Files.exists(caFile, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IllegalStateException("Unexpected persisted PostgreSQL CA certificate");
-            } else if (verifyCa || verifyFull) {
-                throw new IllegalStateException("Verified TLS mode is missing its CA certificate");
-            }
-        } else if ("EMBEDDED".equals(mode)) {
-            String host = firstNonBlank(environment.getProperty("POSTGRES_HOST"), "postgres");
-            String port = firstNonBlank(environment.getProperty("POSTGRES_PORT"), "5432");
-            String database = requireEnvironment(environment, "POSTGRES_DB");
-            String username = requireEnvironment(environment, "POSTGRES_USER");
-            String password = requireEnvironment(environment, "POSTGRES_PASSWORD");
-            datasource.put("spring.datasource.url",
-                    "jdbc:postgresql://" + host + ":" + port + "/" + database
-                            + "?sslmode=disable&currentSchema=public");
-            datasource.put("spring.datasource.username", username);
-            datasource.put("spring.datasource.password", password);
-            datasource.put("spring.datasource.driver-class-name", "org.postgresql.Driver");
-        } else {
+        if (!"EXTERNAL".equals(mode)) {
             throw new IllegalStateException("Persisted database configuration mode is unsupported");
+        }
+        copyRequired(properties, datasource, "spring.datasource.url");
+        copyRequired(properties, datasource, "spring.datasource.username");
+        copyRequired(properties, datasource, "spring.datasource.password");
+        copyRequired(properties, datasource, "spring.datasource.driver-class-name");
+        String url = properties.getProperty("spring.datasource.url");
+        if (!url.startsWith("jdbc:postgresql://")) {
+            throw new IllegalStateException("Persisted database URL is not schema-pinned");
+        }
+        Map<String, String> parameters = parseUniqueQuery(url);
+        String sslMode = parameters.get("sslmode");
+        boolean requireTls = "require".equals(sslMode);
+        boolean verifyCa = "verify-ca".equals(sslMode);
+        boolean verifyFull = "verify-full".equals(sslMode);
+        if (!(requireTls || verifyCa || verifyFull)) {
+            throw new IllegalStateException("Persisted external database TLS mode is unsafe");
+        }
+        if (!"public".equals(parameters.get("currentSchema"))
+                || !"5".equals(parameters.get("connectTimeout"))
+                || !"10".equals(parameters.get("socketTimeout"))
+                || !"true".equals(parameters.get("tcpKeepAlive"))
+                || !"xy-navigation-installer".equals(parameters.get("ApplicationName"))) {
+            throw new IllegalStateException("Persisted database URL parameters are invalid");
+        }
+        String rootCertificate = parameters.get("sslrootcert");
+        Set<String> expectedKeys = rootCertificate == null
+                ? Set.of("sslmode", "currentSchema", "connectTimeout", "socketTimeout",
+                        "tcpKeepAlive", "ApplicationName")
+                : Set.of("sslmode", "currentSchema", "connectTimeout", "socketTimeout",
+                        "tcpKeepAlive", "ApplicationName", "sslrootcert");
+        if (!parameters.keySet().equals(expectedKeys)) {
+            throw new IllegalStateException("Persisted database URL contains unknown parameters");
+        }
+        if (rootCertificate != null) {
+            if (requireTls) {
+                throw new IllegalStateException("Unverified TLS mode must not load a CA file");
+            }
+            requireSecureFile(caFile, "Persisted PostgreSQL CA certificate");
+            if (!Path.of(rootCertificate).toAbsolutePath().normalize().equals(caFile)) {
+                throw new IllegalStateException(
+                        "Persisted PostgreSQL CA certificate path does not match configuration");
+            }
+        } else if (Files.exists(caFile, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalStateException("Unexpected persisted PostgreSQL CA certificate");
+        } else if (verifyCa || verifyFull) {
+            throw new IllegalStateException("Verified TLS mode is missing its CA certificate");
         }
 
         if (hasCompletedMarker) {
@@ -273,11 +260,4 @@ public class PersistedDatabaseEnvironmentPostProcessor implements EnvironmentPos
         throw new IllegalStateException("Required database path is missing");
     }
 
-    private static String requireEnvironment(ConfigurableEnvironment environment, String key) {
-        String value = environment.getProperty(key);
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException("Embedded database environment is incomplete");
-        }
-        return value;
-    }
 }
